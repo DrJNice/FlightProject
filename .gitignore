@@ -49,3 +49,12 @@ po/*~
 rsconnect/
 
 gcp-credentials.json
+
+
+
+
+######################
+# Python files
+######################
+**/.DS_Store
+flight_env/
