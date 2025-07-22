@@ -460,7 +460,7 @@ regression.flight <- lm(Price ~
                         # Dicotomous
                           weekend +
                         # Categorical
-                          Airline + Route + Source + Destination + airport_code_first_stop + airport_code_second_stop + 
+                          Airline + Route + Source + Destination + airport_code_first_stop + airport_code_second_stop + random_categorical +
                         # Dates 
                           departure_date_time  + arrival_date_time, 
                         data = flight_data7)
@@ -470,26 +470,156 @@ summary(regression.flight)
 # Let's look at those regression coefficients
 regression_coefficients <- data.frame(regression.flight$coefficients)
 
+options(scipen = 999)
+#options(scipen = 0)
+
 # 
 regression_coefficients %>% 
   mutate(abs = abs(regression.flight.coefficients)) %>%
   filter(!is.na(abs)) %>%
   arrange(abs)
 
+# for my continuous variables
+# arrival_date_time and departure_date_time
+# did a worse job predicting than the random continuous variable
+
+# for my categorical variables
+# Only 2 routes did worse
+# But I don't think I can remove just those routes
+
 
 ## 
 
-predictor_variables <- c("Airline", 
-                         "departure_date_time", "Departure_Day",  "Departure_Month",  "Departure_Hour", 
-                         "arrival_date_time", 
-                         "weekend",
-                         "Route", "Source", "Destination", "airport_code_first_stop", "airport_code_second_stop",
-                         "number_of_stops", "Duration_Hours",
-                         "random_categorical", "random_continuous")
+predictor_variables <- c(# Continuous
+                          "Departure_Day", "Departure_Month", "Departure_Hour",
+                          "number_of_stops", "Duration_Hours",
+                        # Dicotomous
+                          "weekend",
+                        # Categorical
+                          "Airline", "Route", "Source", "Destination")
 
 outcome_variable <- "Price"
 
 
+#############################################
+# Flight Data Analysis Setup - STREAMLINED
+#############################################
+
+# Your streamlined predictor variables (avoiding high-cardinality categoricals)
+predictor_variables <- c(# Continuous
+  "Departure_Day", "Departure_Month", "Departure_Hour",
+  "number_of_stops", "Duration_Hours",
+  # Dichotomous
+  "weekend",
+  # Lower-cardinality Categorical (keeping only essential ones)
+  "Airline", "Source", "Destination")
+
+# NOTE: Removed "Route", "airport_code_first_stop", "airport_code_second_stop" 
+# to avoid linear dependency issues
+
+outcome_variable <- "Price"
+
+cat("=== STREAMLINED ALL SUBSETS REGRESSION ===\n")
+cat("Testing", length(predictor_variables), "predictor variables\n")
+cat("This will test up to", 2^length(predictor_variables) - 1, "different model combinations\n")
+cat("Variables included:", paste(predictor_variables, collapse = ", "), "\n\n")
+
+#############################################
+# Data exploration function to check cardinality
+#############################################
+
+check_variable_cardinality <- function(data = flight_data7, vars = predictor_variables) {
+  if (!exists("flight_data7")) {
+    cat("flight_data7 not found\n")
+    return(NULL)
+  }
+  
+  cat("=== VARIABLE CARDINALITY CHECK ===\n")
+  for (var in vars) {
+    if (var %in% names(data)) {
+      unique_vals <- length(unique(data[[var]], na.rm = TRUE))
+      cat(var, ": ", unique_vals, " unique values\n")
+      if (unique_vals > 50) {
+        cat("  WARNING: High cardinality - may cause linear dependency issues\n")
+      }
+    } else {
+      cat(var, ": NOT FOUND in dataset\n")
+    }
+  }
+  cat("\n")
+}
+
+#############################################
+# Method 1: Using the leaps package (most efficient)
+#############################################
+
+flight_all_subsets_leaps <- function(data = flight_data7, outcome_var = "Price", 
+                                     predictor_vars = predictor_variables, method = "exhaustive") {
+  
+  # Check if data exists
+  if (!exists("flight_data7")) {
+    stop("flight_data7 dataset not found. Please load your data first.")
+  }
+  
+  # Check variable cardinality first
+  check_variable_cardinality(data, predictor_vars)
+  
+  # Remove rows with missing values in key variables
+  analysis_data <- data %>%
+    select(all_of(c(outcome_var, predictor_vars))) %>%
+    na.omit()
+  
+  cat("Analysis dataset created with", nrow(analysis_data), "complete observations\n")
+  cat("Original dataset had", nrow(data), "observations\n\n")
+  
+  # Run all subsets regression with really.big=TRUE for safety
+  cat("Running all subsets regression...\n")
+  regsubsets_result <- regsubsets(formula(paste(outcome_var, "~", paste(predictor_vars, collapse = " + "))), 
+                                  data = analysis_data, 
+                                  nbest = 1,        # Keep best model of each size
+                                  nvmax = length(predictor_vars),  # Max variables
+                                  method = method,   # "exhaustive", "forward", "backward"
+                                  really.big = TRUE) # Handle large searches
+  
+  # Extract results
+  summary_results <- summary(regsubsets_result)
+  
+  # Create results data frame
+  results_df <- data.frame(
+    n_variables = 1:length(summary_results$rsq),
+    r_squared = summary_results$rsq,
+    adj_r_squared = summary_results$adjr2,
+    cp = summary_results$cp,
+    bic = summary_results$bic,
+    variables_included = apply(summary_results$which[,-1], 1, function(x) {
+      paste(names(x)[x], collapse = ", ")
+    })
+  )
+  
+  # Find best models by different criteria
+  best_rsq_idx <- which.max(results_df$r_squared)
+  best_adj_rsq_idx <- which.max(results_df$adj_r_squared)
+  best_cp_idx <- which.min(results_df$cp)
+  best_bic_idx <- which.min(results_df$bic)
+  
+  # Add indicator columns
+  results_df$best_rsq <- 1:nrow(results_df) == best_rsq_idx
+  results_df$best_adj_rsq <- 1:nrow(results_df) == best_adj_rsq_idx
+  results_df$best_cp <- 1:nrow(results_df) == best_cp_idx
+  results_df$best_bic <- 1:nrow(results_df) == best_bic_idx
+  
+  return(list(
+    results = results_df,
+    regsubsets_object = regsubsets_result,
+    analysis_data = analysis_data,
+    best_models = list(
+      highest_rsq = results_df[best_rsq_idx, ],
+      best_adj_rsq = results_df[best_adj_rsq_idx, ],
+      best_cp = results_df[best_cp_idx, ],
+      best_bic = results_df[best_bic_idx, ]
+    )
+  ))
+}
 
 #############################################
 # Alternative: Forward/Backward Selection (faster and handles dependencies better)
@@ -636,7 +766,6 @@ flight_all_subsets_manual <- function(data = flight_data5, outcome_var = "Price"
   return(results_df)
 }
 
-
 #############################################
 # Visualization function (matches your ggplot style)
 #############################################
@@ -684,12 +813,9 @@ get_best_flight_model_details <- function(data = flight_data7, outcome_var = "Pr
   # Extract original variable names from the dummy variable names
   original_vars <- c()
   
-  # Check for each of our expanded predictor variables
+  # Check for each of our streamlined predictor variables
   if (grepl("Airline", model_variables_string)) {
     original_vars <- c(original_vars, "Airline")
-  }
-  if (grepl("departure_date_time", model_variables_string)) {
-    original_vars <- c(original_vars, "departure_date_time")
   }
   if (grepl("Departure_Day", model_variables_string)) {
     original_vars <- c(original_vars, "Departure_Day")
@@ -700,14 +826,8 @@ get_best_flight_model_details <- function(data = flight_data7, outcome_var = "Pr
   if (grepl("Departure_Hour", model_variables_string)) {
     original_vars <- c(original_vars, "Departure_Hour")
   }
-  if (grepl("arrival_date_time", model_variables_string)) {
-    original_vars <- c(original_vars, "arrival_date_time")
-  }
   if (grepl("weekend", model_variables_string)) {
     original_vars <- c(original_vars, "weekend")
-  }
-  if (grepl("Route", model_variables_string)) {
-    original_vars <- c(original_vars, "Route")
   }
   if (grepl("Source", model_variables_string)) {
     original_vars <- c(original_vars, "Source")
@@ -715,23 +835,11 @@ get_best_flight_model_details <- function(data = flight_data7, outcome_var = "Pr
   if (grepl("Destination", model_variables_string)) {
     original_vars <- c(original_vars, "Destination")
   }
-  if (grepl("airport_code_first_stop", model_variables_string)) {
-    original_vars <- c(original_vars, "airport_code_first_stop")
-  }
-  if (grepl("airport_code_second_stop", model_variables_string)) {
-    original_vars <- c(original_vars, "airport_code_second_stop")
-  }
   if (grepl("number_of_stops", model_variables_string)) {
     original_vars <- c(original_vars, "number_of_stops")
   }
   if (grepl("Duration_Hours", model_variables_string)) {
     original_vars <- c(original_vars, "Duration_Hours")
-  }
-  if (grepl("random_categorical", model_variables_string)) {
-    original_vars <- c(original_vars, "random_categorical")
-  }
-  if (grepl("random_continuous", model_variables_string)) {
-    original_vars <- c(original_vars, "random_continuous")
   }
   
   # Remove rows with missing values using original variable names
@@ -748,7 +856,7 @@ get_best_flight_model_details <- function(data = flight_data7, outcome_var = "Pr
   # Get detailed summary
   model_summary <- summary(best_model)
   
-  cat("=== BEST EXPANDED FLIGHT PRICE PREDICTION MODEL ===\n")
+  cat("=== BEST STREAMLINED FLIGHT PRICE PREDICTION MODEL ===\n")
   cat("Original Variables Used (", length(original_vars), "total):", paste(original_vars, collapse = ", "), "\n")
   cat("R-squared:", round(model_summary$r.squared, 4), "\n")
   cat("Adjusted R-squared:", round(model_summary$adj.r.squared, 4), "\n")
@@ -771,66 +879,110 @@ get_best_flight_model_details <- function(data = flight_data7, outcome_var = "Pr
 # Check if flight_data7 exists before running
 if (exists("flight_data7")) {
   
-  cat("=== RUNNING EXPANDED ALL SUBSETS REGRESSION ON FLIGHT PRICE DATA ===\n\n")
+  cat("=== RUNNING STREAMLINED ALL SUBSETS REGRESSION ON FLIGHT PRICE DATA ===\n\n")
   
-  # Method 1: Using leaps package (recommended for this many variables)
-  cat("Running expanded analysis with leaps package...\n")
-  leaps_results <- flight_all_subsets_leaps()
+  # First, check the cardinality of variables to identify potential issues
+  check_variable_cardinality()
   
-  cat("\n=== EXPANDED RESULTS SUMMARY ===\n")
-  cat("All models ranked by number of variables:\n")
-  print(leaps_results$results)
-  
-  cat("\n=== BEST MODELS BY DIFFERENT CRITERIA ===\n")
-  cat("Highest R-squared:\n")
-  print(leaps_results$best_models$highest_rsq)
-  
-  cat("\nBest Adjusted R-squared:\n")
-  print(leaps_results$best_models$best_adj_rsq)
-  
-  cat("\nBest BIC (Bayesian Information Criterion):\n")
-  print(leaps_results$best_models$best_bic)
-  
-  # Get detailed results for the model with highest R-squared
-  cat("\n=== DETAILED RESULTS FOR HIGHEST R-SQUARED MODEL ===\n")
-  best_model_rsq <- get_best_flight_model_details(model_variables_string = leaps_results$best_models$highest_rsq$variables_included)
-  
-  # Get detailed results for the model with best BIC (often better for prediction)
-  cat("\n=== DETAILED RESULTS FOR BEST BIC MODEL (Recommended) ===\n")
-  best_model_bic <- get_best_flight_model_details(model_variables_string = leaps_results$best_models$best_bic$variables_included)
-  
-  # Create visualization
-  cat("\nCreating visualization...\n")
-  plot_comparison <- plot_flight_model_comparison(leaps_results$results, top_n = 15)
-  print(plot_comparison)
-  
-  # Optional: Run manual method for comparison (WARNING: very slow with 16 variables)
-  cat("\n=== OPTIONAL: MANUAL METHOD ===\n")
-  cat("WARNING: Manual method would test", 2^length(predictor_variables) - 1, "models (65,535 combinations!)\n")
-  cat("This would take a very long time. The leaps package method is strongly recommended.\n")
-  cat("Uncomment the lines below ONLY if you have significant computing time:\n\n")
-  cat("# manual_results <- flight_all_subsets_manual()\n")
-  cat("# print(head(manual_results, 20))\n")
+  # Method 1: Try exhaustive search with streamlined variables
+  cat("Attempting exhaustive search with streamlined variables...\n")
+  tryCatch({
+    leaps_results <- flight_all_subsets_leaps()
+    
+    cat("\n=== STREAMLINED RESULTS SUMMARY ===\n")
+    cat("All models ranked by number of variables:\n")
+    print(leaps_results$results)
+    
+    cat("\n=== BEST MODELS BY DIFFERENT CRITERIA ===\n")
+    cat("Highest R-squared:\n")
+    print(leaps_results$best_models$highest_rsq)
+    
+    cat("\nBest Adjusted R-squared:\n")
+    print(leaps_results$best_models$best_adj_rsq)
+    
+    cat("\nBest BIC (Bayesian Information Criterion):\n")
+    print(leaps_results$best_models$best_bic)
+    
+    # Get detailed results for the model with highest R-squared
+    cat("\n=== DETAILED RESULTS FOR HIGHEST R-SQUARED MODEL ===\n")
+    best_model_rsq <- get_best_flight_model_details(model_variables_string = leaps_results$best_models$highest_rsq$variables_included)
+    
+    # Get detailed results for the model with best BIC (often better for prediction)
+    cat("\n=== DETAILED RESULTS FOR BEST BIC MODEL (Recommended) ===\n")
+    best_model_bic <- get_best_flight_model_details(model_variables_string = leaps_results$best_models$best_bic$variables_included)
+    
+    # Create visualization
+    cat("\nCreating visualization...\n")
+    plot_comparison <- plot_flight_model_comparison(leaps_results$results, top_n = min(15, nrow(leaps_results$results)))
+    print(plot_comparison)
+    
+    # Option to run manual method (now more feasible with fewer variables)
+    cat("\n=== OPTIONAL: MANUAL EXHAUSTIVE SEARCH ===\n")
+    cat("With", length(predictor_variables), "variables, manual method would test", 2^length(predictor_variables) - 1, "models.\n")
+    cat("This is now computationally feasible. Uncomment to run:\n")
+    cat("# manual_results <- flight_all_subsets_manual()\n")
+    cat("# print(head(manual_results, 15))\n")
+    cat("# plot_manual_comparison <- plot_flight_model_comparison(manual_results, top_n = 15)\n")
+    cat("# print(plot_manual_comparison)\n")
+    
+  }, error = function(e) {
+    cat("Exhaustive search still failed:", e$message, "\n")
+    cat("Switching to stepwise selection method...\n\n")
+    
+    # Method 2: Stepwise selection (more robust for categorical variables)
+    cat("=== RUNNING STEPWISE SELECTION (ALTERNATIVE METHOD) ===\n")
+    
+    # Forward selection
+    cat("1. Forward Selection:\n")
+    forward_results <- flight_stepwise_selection(method = "forward")
+    
+    # Backward selection  
+    cat("\n2. Backward Selection:\n")
+    backward_results <- flight_stepwise_selection(method = "backward")
+    
+    # Both directions
+    cat("\n3. Bidirectional Selection:\n") 
+    both_results <- flight_stepwise_selection(method = "both")
+    
+    # Compare the three methods
+    cat("\n=== COMPARISON OF STEPWISE METHODS ===\n")
+    comparison_df <- data.frame(
+      Method = c("Forward", "Backward", "Both"),
+      R_squared = c(summary(forward_results$model)$r.squared,
+                    summary(backward_results$model)$r.squared, 
+                    summary(both_results$model)$r.squared),
+      Adj_R_squared = c(summary(forward_results$model)$adj.r.squared,
+                        summary(backward_results$model)$adj.r.squared,
+                        summary(both_results$model)$adj.r.squared),
+      AIC = c(forward_results$aic, backward_results$aic, both_results$aic),
+      BIC = c(forward_results$bic, backward_results$bic, both_results$bic),
+      N_Variables = c(length(forward_results$variables_selected),
+                      length(backward_results$variables_selected),
+                      length(both_results$variables_selected))
+    )
+    print(comparison_df)
+    
+    # Recommend best model
+    best_method_idx <- which.max(comparison_df$Adj_R_squared)
+    cat("\nRECOMMENDED MODEL: ", comparison_df$Method[best_method_idx], 
+        " (Highest Adjusted R-squared: ", round(comparison_df$Adj_R_squared[best_method_idx], 4), ")\n")
+    
+    # Print the recommended model details
+    if (comparison_df$Method[best_method_idx] == "Forward") {
+      cat("\n=== RECOMMENDED MODEL DETAILS ===\n")
+      print(summary(forward_results$model))
+    } else if (comparison_df$Method[best_method_idx] == "Backward") {
+      cat("\n=== RECOMMENDED MODEL DETAILS ===\n")
+      print(summary(backward_results$model))
+    } else {
+      cat("\n=== RECOMMENDED MODEL DETAILS ===\n")
+      print(summary(both_results$model))
+    }
+  })
   
 } else {
   cat("ERROR: flight_data7 dataset not found!\n")
   cat("Please load your dataset first, then re-run this code.\n")
   cat("For example: flight_data7 <- read.csv('your_file.csv')\n")
 }
-
-#############################################
-# Summary of what each variable might tell us about flight prices:
-#############################################
-
-cat("\n=== INTERPRETATION GUIDE FOR FLIGHT PRICE VARIABLES ===\n")
-cat("Airline: Different airlines have different pricing strategies\n")
-cat("departure_date_time: Specific date/time can affect demand and pricing\n")
-cat("Departure_Day: Day of month might affect pricing (end/beginning of month)\n")
-cat("departure_day_of_week_numeric: Weekdays vs weekends have different pricing\n")
-cat("Departure_Month: Seasonal effects on flight pricing\n")
-cat("Departure_Hour: Time of day affects convenience and pricing\n")
-cat("Source: Origin airport affects base pricing and competition\n")
-cat("Destination: Destination affects demand and pricing\n")
-cat("number_of_stops: More stops usually means lower prices\n")
-cat("Duration_Hours: Longer flights generally cost more\n")
 
