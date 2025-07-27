@@ -56,8 +56,6 @@ flight_data <- flight_data %>%
 ## Updating Data Formats
 
 flight_data$Airline <- as.factor(flight_data$Airline)
-flight_data$Source <- as.factor(flight_data$Source)
-flight_data$Destination <- as.factor(flight_data$Destination)
 flight_data$Total_Stops <- factor(flight_data$Total_Stops, levels = c("non-stop", "1 stop", "2 stops", "3 stops", "4 stops"))
 flight_data$Additional_Info <- as.factor(flight_data$Additional_Info)
 
@@ -164,7 +162,6 @@ flight_data4 %>%
 
 # No time-based patterns to wonky durations.
 
-
 flight_data4 %>%
   rowwise() %>%
   mutate(calculated_duration = arrival_date_time - departure_date_time,
@@ -238,6 +235,38 @@ unique(flight_data5$Destination)
 
 unique(flight_data5$airport_code_first_stop)
 
+# I wonder
+# Does City and airport code match up perfectly
+# yes it does for departure
+
+flight_data5 %>%
+  group_by(Source, airport_code_departure) %>%
+  summarise(count = n())
+
+# but not for arrival
+# I'm also realizing that the Destination has New Delhi instead of Deli, so need to change that first
+
+flight_data5 <- flight_data5 %>%
+  mutate(Destination = ifelse(Destination == "New Delhi", "Delhi", Destination)) 
+
+flight_data5 %>%
+  group_by(Destination, airport_code_arrival) %>%
+  summarise(count = n())
+
+flight_data5 %>%
+  mutate(messy_arrival = ifelse((Destination == "Banglore" & airport_code_arrival == "BLR") | 
+                                  (Destination == "Cochin" & airport_code_arrival == "COK") |
+                                  (Destination == "Delhi" & airport_code_arrival == "DEL") |
+                                  (Destination == "Hyderabad" & airport_code_arrival == "HYD") |
+                                  (Destination == "Kolkata" & airport_code_arrival == "CCU"), "clean", "messy")) %>%
+  group_by(Destination, airport_code_arrival, messy_arrival) %>%
+  summarise(count = n(), .groups = 'drop') %>%
+  group_by(messy_arrival) %>%
+  mutate(total_messy = sum(count))
+
+# Only 45 out of 10589 with messy arrival data - as in the route does not align with the airport code
+# to me this means that the extracted variable is less likely to be correct, so I should continue to use the regular code
+
 # Exploratory Data Analysis
 
 ## Price Outliers
@@ -290,7 +319,7 @@ corr.data <- flight_data6 %>%
          premium_economy = str_detect(Airline, "Premium")) %>%
   select(Airline, premium_economy, departure_date_time, Departure_Day, Departure_Month, Departure_Time,
          departure_day_of_week, arrival_date_time, Arrival_Day, Arrival_Month, Arrival_Time,
-         weekend, Source, Destination, Route, number_of_stops, airport_code_first_stop, airport_code_second_stop,
+         weekend, Route, number_of_stops, airport_code_departure, airport_code_first_stop, airport_code_second_stop, airport_code_arrival,
          Duration_Hours, Price) %>%
   data.matrix()
 
