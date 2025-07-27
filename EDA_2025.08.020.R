@@ -197,34 +197,55 @@ flight_data5 <- flight_data4 %>%
     cols = Route, 
     delim = " → ", 
     names = c("airport_code_departure", "airport_code_first_stop", 
-              "airport_code_second_stop", "airport_code_arrival"),
+              "airport_code_second_stop", "airport_code_third_stop", "airport_code_arrival"),
     too_few = "align_start",  # Fill missing values with NA on the right
-    too_many = "drop",        # Drop extra stops beyond 4 airports
+    too_many = "drop",        # Drop extra stops beyond 5 airports
     cols_remove = FALSE
   ) %>%
   # Count the actual number of stops in each route
   mutate(num_airports = str_count(Route, " → ") + 1) %>%
   # Fix the column assignments based on actual number of airports
   mutate(
-    # For routes with only 2 airports (non-stop)
+    # Fix arrival column - always the last airport
     airport_code_arrival = case_when(
-      num_airports == 2 ~ airport_code_first_stop,  # Move second position to arrival
-      num_airports == 3 ~ airport_code_second_stop, # Move third position to arrival  
-      TRUE ~ airport_code_arrival                   # Keep fourth position as arrival
+      num_airports == 2 ~ airport_code_first_stop,   # 2 airports: departure → arrival
+      num_airports == 3 ~ airport_code_second_stop,  # 3 airports: departure → stop → arrival  
+      num_airports == 4 ~ airport_code_third_stop,   # 4 airports: departure → stop → stop → arrival
+      TRUE ~ airport_code_arrival                    # 5 airports: departure → stop → stop → stop → arrival
     ),
-    # For routes with only 3 airports (1 stop)
+    
+    # Fix third stop column
+    airport_code_third_stop = case_when(
+      num_airports <= 4 ~ NA_character_,             # No third stop for routes with 4 or fewer airports
+      TRUE ~ airport_code_third_stop                 # Keep third stop only for 5-airport routes
+    ),
+    
+    # Fix second stop column  
     airport_code_second_stop = case_when(
-      num_airports == 2 ~ NA_character_,            # No second stop for non-stop
-      num_airports == 3 ~ NA_character_,            # No second stop for 1-stop
-      TRUE ~ airport_code_second_stop               # Keep second stop for 2+ stops
+      num_airports <= 3 ~ NA_character_,             # No second stop for routes with 3 or fewer airports
+      TRUE ~ airport_code_second_stop                # Keep second stop for 4+ airport routes
     ),
-    # For routes with only 2 airports (non-stop)  
+    
+    # Fix first stop column
     airport_code_first_stop = case_when(
-      num_airports == 2 ~ NA_character_,            # No first stop for non-stop
-      TRUE ~ airport_code_first_stop                # Keep first stop for 1+ stops
+      num_airports <= 2 ~ NA_character_,             # No first stop for non-stop flights
+      TRUE ~ airport_code_first_stop                 # Keep first stop for 3+ airport routes
     )
   ) %>%
   select(-num_airports)
+
+# Verify the results with some examples
+flight_data5 %>%
+  select(Route, airport_code_departure, airport_code_first_stop, 
+         airport_code_second_stop, airport_code_third_stop, airport_code_arrival) %>%
+  # Show examples of different route types
+  slice(c(1:5, 
+          which(str_count(flight_data5$Route, " → ") == 1)[1:2],  # 2 airports
+          which(str_count(flight_data5$Route, " → ") == 2)[1:2],  # 3 airports  
+          which(str_count(flight_data5$Route, " → ") == 3)[1:2],  # 4 airports
+          which(str_count(flight_data5$Route, " → ") == 4)[1:2]   # 5 airports (if any)
+  )) %>%
+  arrange(str_count(Route, " → "))
 
 # Looking into the stops
 # These are all in the same time zone, so I don't need to worry about that
@@ -238,13 +259,13 @@ unique(flight_data5$airport_code_first_stop)
 # I wonder
 # Does City and airport code match up perfectly
 # yes it does for departure
+# and arrival
 
 flight_data5 %>%
   group_by(Source, airport_code_departure) %>%
   summarise(count = n())
 
-# but not for arrival
-# I'm also realizing that the Destination has New Delhi instead of Deli, so need to change that first
+# but I'm also realizing that the Destination has New Delhi instead of Deli, so need to change that first
 
 flight_data5 <- flight_data5 %>%
   mutate(Destination = ifelse(Destination == "New Delhi", "Delhi", Destination)) 
@@ -253,31 +274,42 @@ flight_data5 %>%
   group_by(Destination, airport_code_arrival) %>%
   summarise(count = n())
 
-flight_data5 %>%
-  mutate(messy_arrival = ifelse((Destination == "Banglore" & airport_code_arrival == "BLR") | 
-                                  (Destination == "Cochin" & airport_code_arrival == "COK") |
-                                  (Destination == "Delhi" & airport_code_arrival == "DEL") |
-                                  (Destination == "Hyderabad" & airport_code_arrival == "HYD") |
-                                  (Destination == "Kolkata" & airport_code_arrival == "CCU"), "clean", "messy")) %>%
-  group_by(Destination, airport_code_arrival, messy_arrival) %>%
-  summarise(count = n(), .groups = 'drop') %>%
-  group_by(messy_arrival) %>%
-  mutate(total_messy = sum(count))
+flight_data6 <- flight_data5
 
-# Only 45 out of 10589 with messy arrival data - as in the route does not align with the airport code
-# to me this means that the extracted variable is less likely to be correct, so I should continue to use the regular code
 
 # Exploratory Data Analysis
+
+## Routes
+
+flight_data6 %>%
+  mutate(row = row_number()) %>%
+  select(row, Total_Stops, airport_code_departure, airport_code_first_stop, airport_code_second_stop, airport_code_third_stop, airport_code_arrival) %>%
+  pivot_longer(!row:Total_Stops, names_to = "stop_on_trip", values_to = "airport_code") %>%
+  group_by(Total_Stops, stop_on_trip, airport_code) %>%
+  mutate(count = n()) %>%
+  mutate(stop_on_trip = factor(stop_on_trip, levels = c("airport_code_departure", 
+                                                        "airport_code_first_stop", 
+                                                        "airport_code_second_stop", 
+                                                        "airport_code_third_stop",
+                                                        "airport_code_arrival"))) %>%
+  filter(!is.na(airport_code)) %>%
+  ggplot(aes(x = stop_on_trip,  y = reorder(airport_code,count), group = row)) +
+  geom_point() +
+  geom_line(aes(color = count)) +
+  labs(x = "Stop on trip", y = "airport code", color = "count of flights\non that path") +
+  facet_wrap(.~Total_Stops) +
+  theme(axis.text.x = element_text(angle = 30, vjust = .8, hjust = .8))
+
 
 ## Price Outliers
 
 # Number of Price Outliers # 
   
-nrow(rstatix::identify_outliers(data = flight_data5, variable = "Price"))
+nrow(rstatix::identify_outliers(data = flight_data6, variable = "Price"))
 
 # Visualizations of outliers# 
   
-flight_data5 %>%
+flight_data6 %>%
   ggplot(aes(x = Price)) +
   geom_boxplot(fill = "lightblue", alpha = 0.7) +
   labs(title = "Distribution of Flight Prices",
@@ -289,7 +321,7 @@ flight_data5 %>%
 
 # An outlier is a value 1.5 times that of the IQR. Below, we see outliers are prices above $23,170.
 
-outlier_summary <- rstatix::identify_outliers(data = flight_data5, variable = "Price")
+outlier_summary <- rstatix::identify_outliers(data = flight_data6, variable = "Price")
 
 # Create a more readable summary table
 outlier_summary %>%
@@ -298,7 +330,7 @@ outlier_summary %>%
 
 # Removing the outliers.# 
 
-flight_data6 <- flight_data5 %>%
+flight_data7 <- flight_data6 %>%
   filter(Price < 23170)
 
 
@@ -306,9 +338,9 @@ flight_data6 <- flight_data5 %>%
 
 # Including the variables in my correlation Matrix# 
 
-colnames(flight_data6)
+colnames(flight_data7)
 
-corr.data <- flight_data6 %>%
+corr.data <- flight_data7 %>%
   mutate(weekend = case_when(departure_day_of_week == "Sunday" | departure_day_of_week == "Saturday" ~ "Weekend",
                              TRUE ~ "Weekday"),
          number_of_stops = case_when(Total_Stops == "non-stop" ~ 0,
@@ -319,7 +351,7 @@ corr.data <- flight_data6 %>%
          premium_economy = str_detect(Airline, "Premium")) %>%
   select(Airline, premium_economy, departure_date_time, Departure_Day, Departure_Month, Departure_Time,
          departure_day_of_week, arrival_date_time, Arrival_Day, Arrival_Month, Arrival_Time,
-         weekend, Route, number_of_stops, airport_code_departure, airport_code_first_stop, airport_code_second_stop, airport_code_arrival,
+         weekend, Route, number_of_stops, airport_code_departure, airport_code_first_stop, airport_code_second_stop, airport_code_third_stop, airport_code_arrival,
          Duration_Hours, Price) %>%
   data.matrix()
 
@@ -348,7 +380,7 @@ price_correlations
 
 # Price by total stops# 
 
-flight_data6 %>%
+flight_data7 %>%
   filter(!is.na(Total_Stops)) %>%
   mutate(number_of_stops = case_when(Total_Stops == "non-stop" ~ 0,
                                      Total_Stops == "1 stop" ~ 1,
@@ -366,7 +398,7 @@ flight_data6 %>%
 
 # Duration of flight# 
 
-flight_data6 %>%
+flight_data7 %>%
   filter(!is.na(Duration_Hours)) %>%
   ggplot(aes(x = Duration_Hours, y = Price)) +
   geom_point(alpha = 0.6) +
@@ -376,10 +408,9 @@ flight_data6 %>%
        y = "Price ($)") +
   theme_minimal()
 
-
 # Both number of stops and duration# 
 
-flight_data6 %>%
+flight_data7 %>%
   filter(!is.na(Duration_Hours)) %>%
   filter(!is.na(Total_Stops)) %>%
   ggplot(aes(x = Duration_Hours, y = Price, color = Total_Stops)) +
@@ -395,11 +426,12 @@ flight_data6 %>%
 
 # Route # 
 # Well there is a clear impact of route
+# But not necessarily correlated with number of stops
 
-flight_data6 %>%
+flight_data7 %>%
   filter(!is.na(Route)) %>%
-  ggplot(aes(x = reorder(Route, Price), y = Price)) +
-  geom_boxplot(fill = "lightblue", alpha = 0.7) +
+  ggplot(aes(x = reorder(Route, Price), y = Price, fill = Total_Stops)) +
+  geom_boxplot( alpha = 0.7) +
   labs(title = "Flight Price by Route",
        x = "Route",
        y = "Price ($)") +
@@ -407,10 +439,9 @@ flight_data6 %>%
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
   coord_flip() 
 
-
 # Bringing multiple variables together# 
 
-flight_data6 %>%
+flight_data7 %>%
   ggplot(aes(x = Duration_Hours, y = Price)) +
   geom_point(alpha = 0.6) +
   geom_smooth(method = 'lm', color = "black", se = TRUE) +
@@ -434,7 +465,7 @@ flight_data6 %>%
 # This model predicts about 52% of the variance in total Price, which isn't bad! But I think it could be better.
 
 regression.flight <- lm(Price ~ Total_Stops + Duration_Hours +
-                       Departure_Day + Destination, data = flight_data6)
+                       Departure_Day + Destination, data = flight_data7)
 
 # Create a tidy summary
 regression_summary <- tidy(regression.flight) %>%
@@ -456,7 +487,7 @@ glance(regression.flight) %>%
 ## Preparing Data for All Subsets Regression
 
 
-flight_data7 <- flight_data6 %>%
+flight_data8 <- flight_data7 %>%
   mutate(number_of_stops = case_when(Total_Stops == "non-stop" ~ 0,
                                      Total_Stops == "1 stop" ~ 1,
                                      Total_Stops == "2 stops" ~ 2,
@@ -468,9 +499,9 @@ flight_data7 <- flight_data6 %>%
 
 # Now I'm going to add a random categorical and a random continuous feature to my variable
 
-flight_data7$random_categorical <- sample(c('red', 'orange', 'yellow', 'green', 'blue'), nrow(flight_data7), replace=TRUE)
+flight_data8$random_categorical <- sample(c('red', 'orange', 'yellow', 'green', 'blue'), nrow(flight_data8), replace=TRUE)
 
-flight_data7$random_continuous <- sample(1:9, nrow(flight_data7), replace = TRUE)/10
+flight_data8$random_continuous <- sample(1:9, nrow(flight_data8), replace = TRUE)/10
 
   
 # First, I identify the variables in the model.# 
@@ -479,7 +510,7 @@ flight_data7$random_continuous <- sample(1:9, nrow(flight_data7), replace = TRUE
 # Whichever variables have higher standardized values than the random variables will not be included
 # first scale the items and then run it
 
-glimpse(flight_data7)
+glimpse(flight_data8)
 
 regression.flight <- lm(Price ~ 
                         # Continuous
@@ -492,7 +523,7 @@ regression.flight <- lm(Price ~
                           Airline + Route + Source + Destination + airport_code_first_stop + airport_code_second_stop + random_categorical +
                         # Dates 
                           departure_date_time  + arrival_date_time, 
-                        data = flight_data7)
+                        data = flight_data8)
 
 summary(regression.flight)
 
@@ -557,9 +588,9 @@ cat("Variables included:", paste(predictor_variables, collapse = ", "), "\n\n")
 # Data exploration function to check cardinality
 #############################################
 
-check_variable_cardinality <- function(data = flight_data7, vars = predictor_variables) {
-  if (!exists("flight_data7")) {
-    cat("flight_data7 not found\n")
+check_variable_cardinality <- function(data = flight_data8, vars = predictor_variables) {
+  if (!exists("flight_data8")) {
+    cat("flight_data8 not found\n")
     return(NULL)
   }
   
@@ -582,12 +613,12 @@ check_variable_cardinality <- function(data = flight_data7, vars = predictor_var
 # Method 1: Using the leaps package (most efficient)
 #############################################
 
-flight_all_subsets_leaps <- function(data = flight_data7, outcome_var = "Price", 
+flight_all_subsets_leaps <- function(data = flight_data8, outcome_var = "Price", 
                                      predictor_vars = predictor_variables, method = "exhaustive") {
   
   # Check if data exists
-  if (!exists("flight_data7")) {
-    stop("flight_data7 dataset not found. Please load your data first.")
+  if (!exists("flight_data8")) {
+    stop("flight_data8 dataset not found. Please load your data first.")
   }
   
   # Check variable cardinality first
@@ -654,12 +685,12 @@ flight_all_subsets_leaps <- function(data = flight_data7, outcome_var = "Price",
 # Alternative: Forward/Backward Selection (faster and handles dependencies better)
 #############################################
 
-flight_stepwise_selection <- function(data = flight_data7, outcome_var = "Price", 
+flight_stepwise_selection <- function(data = flight_data8, outcome_var = "Price", 
                                       predictor_vars = predictor_variables, method = "both") {
   
   # Check if data exists
-  if (!exists("flight_data7")) {
-    stop("flight_data7 dataset not found. Please load your data first.")
+  if (!exists("flight_data8")) {
+    stop("flight_data8 dataset not found. Please load your data first.")
   }
   
   # Remove rows with missing values in key variables
@@ -710,12 +741,12 @@ flight_stepwise_selection <- function(data = flight_data7, outcome_var = "Price"
   ))
 }
 
-flight_all_subsets_manual <- function(data = flight_data5, outcome_var = "Price", 
+flight_all_subsets_manual <- function(data = flight_data6, outcome_var = "Price", 
                                       predictor_vars = predictor_variables) {
   
   # Check if data exists
-  if (!exists("flight_data5")) {
-    stop("flight_data5 dataset not found. Please load your data first.")
+  if (!exists("flight_data6")) {
+    stop("flight_data6 dataset not found. Please load your data first.")
   }
   
   # Remove rows with missing values in key variables
@@ -834,7 +865,7 @@ plot_flight_model_comparison <- function(results_df, top_n = 15) {
 # Helper function to get detailed results for best flight price model
 #############################################
 
-get_best_flight_model_details <- function(data = flight_data7, outcome_var = "Price", model_variables_string) {
+get_best_flight_model_details <- function(data = flight_data8, outcome_var = "Price", model_variables_string) {
   
   # Parse the variable string to extract original variable names
   # This handles the dummy variables created by R for categorical variables
@@ -905,8 +936,8 @@ get_best_flight_model_details <- function(data = flight_data7, outcome_var = "Pr
 # Run the analysis on your flight data
 #############################################
 
-# Check if flight_data7 exists before running
-if (exists("flight_data7")) {
+# Check if flight_data8 exists before running
+if (exists("flight_data8")) {
   
   cat("=== RUNNING STREAMLINED ALL SUBSETS REGRESSION ON FLIGHT PRICE DATA ===\n\n")
   
@@ -1010,8 +1041,8 @@ if (exists("flight_data7")) {
   })
   
 } else {
-  cat("ERROR: flight_data7 dataset not found!\n")
+  cat("ERROR: flight_data8 dataset not found!\n")
   cat("Please load your dataset first, then re-run this code.\n")
-  cat("For example: flight_data7 <- read.csv('your_file.csv')\n")
+  cat("For example: flight_data8 <- read.csv('your_file.csv')\n")
 }
 
