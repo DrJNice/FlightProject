@@ -465,7 +465,7 @@ flight_data7 %>%
 # This model predicts about 52% of the variance in total Price, which isn't bad! But I think it could be better.
 
 regression.flight <- lm(Price ~ Total_Stops + Duration_Hours +
-                       Departure_Day + Destination, data = flight_data7)
+                          airport_code_departure + Route, data = flight_data7)
 
 # Create a tidy summary
 regression_summary <- tidy(regression.flight) %>%
@@ -477,7 +477,6 @@ regression_summary
 glance(regression.flight) %>%
   select(r.squared, adj.r.squared, sigma, statistic, p.value, df, nobs) %>%
   mutate(across(where(is.numeric), ~ round(.x, 4))) 
-
 
 
 # Regressions like a Data Scientist
@@ -520,7 +519,8 @@ regression.flight <- lm(Price ~
                         # Dicotomous
                           weekend +
                         # Categorical
-                          Airline + Route + Source + Destination + airport_code_first_stop + airport_code_second_stop + random_categorical +
+                          Airline + random_categorical +
+                          airport_code_departure + airport_code_first_stop + airport_code_second_stop + airport_code_third_stop + airport_code_arrival +
                         # Dates 
                           departure_date_time  + arrival_date_time, 
                         data = flight_data8)
@@ -540,12 +540,11 @@ regression_coefficients %>%
   arrange(abs)
 
 # for my continuous variables
-# arrival_date_time and departure_date_time
+# departure_date_time 
 # did a worse job predicting than the random continuous variable
 
 # for my categorical variables
-# Only 2 routes did worse
-# But I don't think I can remove just those routes
+# nothing did worse
 
 
 ## 
@@ -556,7 +555,7 @@ predictor_variables <- c(# Continuous
                         # Dicotomous
                           "weekend",
                         # Categorical
-                          "Airline", "Route", "Source", "Destination")
+                          "Airline", "airport_code_departure", "airport_code_first_stop", "airport_code_second_stop", "airport_code_third_stop", "airport_code_arrival")
 
 outcome_variable <- "Price"
 
@@ -572,7 +571,7 @@ predictor_variables <- c(# Continuous
   # Dichotomous
   "weekend",
   # Lower-cardinality Categorical (keeping only essential ones)
-  "Airline", "Source", "Destination")
+  "Airline", "airport_code_departure", "airport_code_first_stop", "airport_code_second_stop", "airport_code_third_stop", "airport_code_arrival")
 
 # NOTE: Removed "Route", "airport_code_first_stop", "airport_code_second_stop" 
 # to avoid linear dependency issues
