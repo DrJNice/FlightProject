@@ -18,10 +18,12 @@ library(leaps) # fancy regressions
 library(broom) # fancy regressions
 
 
-## Data
+## Pull in Data
 
 flight_data <- read_excel("Data_Train.xlsx")
 flight_data <- as.data.frame(flight_data)
+
+# Get a scan 
 
 glimpse(flight_data)
 
@@ -76,7 +78,7 @@ flight_data2 <- flight_data1 %>%
          Arrival_Time_Only = paste0(Arrival_Time_Only, ":00"),
          Arrival_Date = str_extract(Arrival_Time, "\\d{1,2} \\w{3}$") # Pull out just date
   ) %>%
-  separate(Arrival_Date, into = c("Arrival_Day", "Arrival_Month"), sep = " ", remove = FALSE) %>%
+  separate(Arrival_Date, into = c("Arrival_Day", "Arrival_Month"), sep = " ", remove = FALSE) %>% # separate out the string
   mutate(Arrival_Month_Num = case_when(Arrival_Month == "Jan" ~ 01, # replacing the words with numbers
                                        Arrival_Month == "Feb" ~ 02,
                                        Arrival_Month == "Mar" ~ 03,
@@ -93,22 +95,23 @@ flight_data2 <- flight_data1 %>%
            into = c("Departure_Day", "Departure_Month", "Departure_Year"), 
            sep = "/", 
            remove = FALSE) %>%
-  mutate(Arrival_Day = ifelse(!is.na(Arrival_Day), Arrival_Day, as.numeric(Departure_Day)), 
+  mutate(Arrival_Day = ifelse(!is.na(Arrival_Day), Arrival_Day, as.numeric(Departure_Day)), # saying that if no 
          Arrival_Month_Num = ifelse(!is.na(Arrival_Month_Num), Arrival_Month_Num, as.numeric(Departure_Month)),
          Arrival_Date_combined = paste0(Departure_Year, "-", Arrival_Month_Num, "-", Arrival_Day)) %>%
   mutate(arrival_date_time = ymd_hms(paste0(Arrival_Date_combined, " ", Arrival_Time_Only))) %>%
   select(-Arrival_Month, -Arrival_Time) %>%
-  rename(Departure_Time = Dep_Time,
+  rename(Departure_Time = Dep_Time, # rename my variables
          Arrival_Month = Arrival_Month_Num, 
          Arrival_Time = Arrival_Time_Only) %>%
-  select(Airline, Date_of_Journey, 
+  select(Airline, Date_of_Journey, # select the ones I want
          departure_date_time, Departure_Day, Departure_Month, Departure_Year, Departure_Time,
          arrival_date_time, Arrival_Day, Arrival_Month, Arrival_Time,
          Duration, 
          Source, Destination, Route, Total_Stops, Price, Additional_Info)
 
-flight_data3 <- flight_data2
+# rename the dataset
 
+flight_data3 <- flight_data2
 
 # Making sure all the dates are formatted correctly
 
@@ -120,8 +123,9 @@ flight_data3$Arrival_Day <- as.numeric(flight_data3$Arrival_Day)
 flight_data3$Departure_Time <- as_hms(flight_data3$Departure_Time)
 flight_data3$Arrival_Time <- as_hms(flight_data3$Arrival_Time)
 
-flight_data4 <- flight_data3
+# replicate data set
 
+flight_data4 <- flight_data3
 
 # Let's add features for day of week and hour of departure
 
