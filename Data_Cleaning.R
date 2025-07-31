@@ -280,3 +280,39 @@ flight_data5 %>%
 
 flight_data6 <- flight_data5
 
+# Making numeric variables
+
+flight_data6 <- flight_data6 %>%
+  mutate(number_of_stops = case_when(Total_Stops == "non-stop" ~ 0,
+                                     Total_Stops == "1 stop" ~ 1,
+                                     Total_Stops == "2 stops" ~ 2,
+                                     Total_Stops == "3 stops" ~ 3,
+                                     Total_Stops == "4 stops" ~ 4),
+         weekend = case_when(departure_day_of_week == "Sunday" | departure_day_of_week == "Saturday" ~ "Weekend",
+                             TRUE ~ "Weekday"))
+
+# make my train test val data random variable
+
+flight_data6$data_set_division <- sample(c("Train", "Test", "Val"), nrow(flight_data6), replace=TRUE, prob = c(0.8, .10, .10))
+
+# Double checking that it split right
+
+flight_data6 %>%
+  group_by(data_set_division) %>%
+  summarise(count = n()) %>%
+  mutate(perc = 100 * count/sum(count))
+  
+
+flight_data6_train <- flight_data6 %>% filter(data_set_division == "Train")
+
+flight_data6_test <- flight_data6 %>% filter(data_set_division == "Test")
+
+flight_data6_val <- flight_data6 %>% filter(data_set_division == "Val")
+
+
+write_csv(flight_data6_train, "flight_data_train.csv", na = "")  
+  
+write_csv(flight_data6_test, "flight_data_test.csv", na = "") 
+
+write_csv(flight_data6_val, "flight_data_val.csv", na = "") 
+
