@@ -17,11 +17,16 @@ library(corrplot) # graph correlation plots
 library(leaps) # fancy regressions
 library(broom) # fancy regressions
 
+## Pull in Data
+
+flight_data7 <- read_csv("flight_data_train.csv")
+flight_data7 <- as.data.frame(flight_data7)
+
 # Exploratory Data Analysis
 
 ## Routes
 
-flight_data6 %>%
+flight_data7 %>%
   mutate(row = row_number()) %>%
   select(row, Total_Stops, airport_code_departure, airport_code_first_stop, airport_code_second_stop, airport_code_third_stop, airport_code_arrival) %>%
   pivot_longer(!row:Total_Stops, names_to = "stop_on_trip", values_to = "airport_code") %>%
@@ -45,11 +50,11 @@ flight_data6 %>%
 
 # Number of Price Outliers # 
 
-nrow(rstatix::identify_outliers(data = flight_data6, variable = "Price"))
+nrow(rstatix::identify_outliers(data = flight_data7, variable = "Price"))
 
 # Visualizations of outliers# 
 
-flight_data6 %>%
+flight_data7 %>%
   ggplot(aes(x = Price)) +
   geom_boxplot(fill = "lightblue", alpha = 0.7) +
   labs(title = "Distribution of Flight Prices",
@@ -61,16 +66,20 @@ flight_data6 %>%
 
 # An outlier is a value 1.5 times that of the IQR. Below, we see outliers are prices above $23,170.
 
-outlier_summary <- rstatix::identify_outliers(data = flight_data6, variable = "Price")
+outlier_summary <- rstatix::identify_outliers(data = flight_data7, variable = "Price")
 
 # Create a more readable summary table
 outlier_summary %>%
   select(Airline, Date_of_Journey, departure_date_time, Price, is.outlier, is.extreme) %>%
   head(10) 
 
+# Minimum Price in the outliers
+
+min(outlier_summary$Price)
+
 # Removing the outliers.# 
 
-flight_data7 <- flight_data6 %>%
+flight_data8 <- flight_data7 %>%
   filter(Price < 23170)
 
 
@@ -78,9 +87,9 @@ flight_data7 <- flight_data6 %>%
 
 # Including the variables in my correlation Matrix# 
 
-colnames(flight_data7)
+colnames(flight_data8)
 
-corr.data <- flight_data7 %>%
+corr.data <- flight_data8 %>%
   mutate(weekend = case_when(departure_day_of_week == "Sunday" | departure_day_of_week == "Saturday" ~ "Weekend",
                              TRUE ~ "Weekday"),
          number_of_stops = case_when(Total_Stops == "non-stop" ~ 0,
@@ -120,7 +129,7 @@ price_correlations
 
 # Price by total stops# 
 
-flight_data7 %>%
+flight_data8 %>%
   filter(!is.na(Total_Stops)) %>%
   mutate(number_of_stops = case_when(Total_Stops == "non-stop" ~ 0,
                                      Total_Stops == "1 stop" ~ 1,
@@ -138,7 +147,7 @@ flight_data7 %>%
 
 # Duration of flight# 
 
-flight_data7 %>%
+flight_data8 %>%
   filter(!is.na(Duration_Hours)) %>%
   ggplot(aes(x = Duration_Hours, y = Price)) +
   geom_point(alpha = 0.6) +
@@ -150,7 +159,7 @@ flight_data7 %>%
 
 # Both number of stops and duration# 
 
-flight_data7 %>%
+flight_data8 %>%
   filter(!is.na(Duration_Hours)) %>%
   filter(!is.na(Total_Stops)) %>%
   ggplot(aes(x = Duration_Hours, y = Price, color = Total_Stops)) +
@@ -168,7 +177,7 @@ flight_data7 %>%
 # Well there is a clear impact of route
 # But not necessarily correlated with number of stops
 
-flight_data7 %>%
+flight_data8 %>%
   filter(!is.na(Route)) %>%
   ggplot(aes(x = reorder(Route, Price), y = Price, fill = Total_Stops)) +
   geom_boxplot( alpha = 0.7) +
@@ -181,7 +190,7 @@ flight_data7 %>%
 
 # Bringing multiple variables together# 
 
-flight_data7 %>%
+flight_data8 %>%
   ggplot(aes(x = Duration_Hours, y = Price)) +
   geom_point(alpha = 0.6) +
   geom_smooth(method = 'lm', color = "black", se = TRUE) +
