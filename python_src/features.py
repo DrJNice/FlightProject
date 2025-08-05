@@ -2,6 +2,10 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 
+def parse_dates(df, date):
+    """Parse date strings into datetime objects."""
+    return pd.to_datetime(df[date], format='%d/%m/%Y')
+
 
 # Import Data
 flight_data = pd.read_excel('../Data_Train.xlsx')
@@ -124,3 +128,62 @@ def parse_duration(duration_str):
 flight_data4['Duration_Hours'] = flight_data4['Duration'].apply(parse_duration)
 
 print(flight_data4.head())
+
+################################
+# Routes
+################################
+
+# Create working copy
+flight_data5 = flight_data4.copy()
+
+# Split routes into components
+def parse_route(route):
+    """Parse route string into standardized airport columns"""
+    if pd.isna(route):
+        return pd.Series([None] * 5)
+    
+    airports = route.split(' → ')
+    num_airports = len(airports)
+    
+    # Initialize all positions as None
+    departure, stop1, stop2, stop3, arrival = None, None, None, None, None
+    
+    # Always assign departure (first) and arrival (last)
+    departure = airports[0]
+    arrival = airports[-1]
+    
+    # Assign intermediate stops based on route length
+    if num_airports >= 3:
+        stop1 = airports[1] if num_airports > 2 else None
+    if num_airports >= 4:
+        stop2 = airports[2] if num_airports > 3 else None  
+    if num_airports >= 5:
+        stop3 = airports[3] if num_airports > 4 else None
+    
+    return pd.Series([departure, stop1, stop2, stop3, arrival])
+
+
+# Apply parsing function
+airport_cols = flight_data5['Route'].apply(parse_route)
+airport_cols.columns = ['airport_code_departure', 'airport_code_first_stop',
+                       'airport_code_second_stop', 'airport_code_third_stop', 'airport_code_arrival']
+
+# Add to dataframe
+flight_data5 = pd.concat([flight_data5, airport_cols], axis=1)
+
+# Fix destination naming inconsistency
+flight_data5 = flight_data5.copy()
+flight_data5['Destination'] = flight_data5['Destination'].replace('New Delhi', 'Delhi')
+
+################################
+# Outlier Removal
+################################
+
+flight_data5 = flight_data5[flight_data5['Total_Stops'] != '4 stops'].copy()
+flight_data5 = flight_data5[
+    flight_data5['arrival_date_time'] > flight_data5['departure_date_time']
+].copy()
+flight_data5 = flight_data5[flight_data5['Price'] < 23170].copy()
+
+print(flight_data5.head())
+breakpoint()
