@@ -1,7 +1,10 @@
-# Regressions like a statistician
+# data
 
 flight_data7 <- read_csv("flight_data_train.csv")
 flight_data7 <- as.data.frame(flight_data7)
+
+
+# Regressions like a statistician
 
 # Approach 1 
 
