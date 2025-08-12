@@ -1,0 +1,472 @@
+---
+title: "LASSO Regressions Quarto"
+format:
+  html:
+    toc: true
+    toc-depth: 4
+    html-math-method: katex
+    fontsize: 11pt
+    fig-width: 8
+    fig-height: 6
+    df-print: paged
+    code-overflow: wrap
+editor: visual
+---
+
+```{=html}
+<style type="text/css">
+.main-container {
+  max-width: 1400px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Better table formatting */
+.table {
+  font-size: 0.9em;
+  margin: 1em 0;
+}
+
+.table th, .table td {
+  padding: 0.5em;
+  text-align: left;
+}
+
+/* Coefficient table styling */
+.coef-table {
+  font-size: 0.95em;
+  font-family: monospace;
+}
+
+/* Better code output - smaller font to fit width */
+pre {
+  font-size: 0.90em;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* Regression output - smaller font to fit better */
+.cell-output pre {
+  font-size: .85em;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+/* Force kable tables to respect column widths */
+.kable-table {
+  width: auto !important;
+  max-width: 500px !important;
+  table-layout: fixed !important;
+}
+
+.kable-table th:first-child,
+.kable-table td:first-child {
+  width: 300px !important;
+  max-width: 300px !important;
+  word-wrap: break-word;
+}
+
+.kable-table th:last-child,
+.kable-table td:last-child {
+  width: 100px !important;
+  max-width: 100px !important;
+  text-align: right;
+}
+</style>
+```
+
+# Packages
+
+```{r}
+#| warning: false
+#| output: false
+#| message: false 
+# Data Manipulation
+library(tidyverse) # Basic data manipulation function
+library(janitor) # Advanced data manipulation function
+# Graphing and Analysis
+library(glmnet)
+# Quarto
+library(kableExtra)
+```
+
+# Data
+
+```{r}
+#| echo: false
+#| warning: false
+#| message: false 
+
+flight_data7 <- read_csv("~/FlightProject/flight_data_train.csv")
+flight_data7 <- as.data.frame(flight_data7)
+
+flight_data8 <- flight_data7 %>%
+  mutate(number_of_stops = case_when(Total_Stops == "non-stop" ~ 0,
+                                     Total_Stops == "1 stop" ~ 1,
+                                     Total_Stops == "2 stops" ~ 2,
+                                     Total_Stops == "3 stops" ~ 3,
+                                     Total_Stops == "4 stops" ~ 4),
+         weekend = case_when(departure_day_of_week == "Sunday" | departure_day_of_week == "Saturday" ~ "Weekend",
+                             TRUE ~ "Weekday"))
+
+flight_data8 <- flight_data8 %>%
+  select(Airline, number_of_stops, airport_code_departure, airport_code_arrival, Departure_Day, Departure_Month, Departure_Hour, Duration_Hours, weekend, Price)
+```
+
+```{r}
+#| warning: false
+#| message: false 
+
+glimpse(flight_data8)
+```
+
+# Regressions
+
+## Linear Regression
+
+```{r}
+#| warning: false
+#| message: false 
+#| fig-width: 12
+
+regression.flight <- lm(Price ~ Departure_Day + Departure_Month + Departure_Hour + Duration_Hours + 
+                          number_of_stops + weekend + 
+                          Airline + airport_code_departure + airport_code_arrival,
+                          data = flight_data8)
+```
+
+```{r}
+#| echo: false
+#| warning: false
+#| message: false 
+#| fig-width: 12
+
+options(width = 120)
+summary(regression.flight)
+```
+
+## LASSO Technique
+
+### Background
+
+LASSO is a **regularization technique** that extends ordinary least squares regression by adding a penalty term to prevent overfitting and perform automatic **feature selection**. Here's how it works:
+
+#### The Core Mechanism
+
+In regular linear regression, we minimize the sum of squared errors. LASSO adds an L1 penalty term:
+
+**LASSO objective function:** Minimize \[RSS + λ∑\|βⱼ\|\]
+
+Where λ (lambda) is the **regularization parameter** (or hyperparameter) that controls the strength of the penalty. The key insight is that the L1 penalty (absolute values of coefficients) forces some coefficients to exactly zero, effectively removing those features from the model.
+
+#### Why Data Scientists Love LASSO
+
+1.  **Automatic Feature Selection**: Unlike traditional stepwise regression you might be familiar with, LASSO simultaneously fits the model and selects features. This is crucial in high-dimensional data where you might have hundreds or thousands of features.
+
+2.  **Handles Multicollinearity**: When features are highly correlated, LASSO tends to pick one from a group and zero out the others, creating a more interpretable model.
+
+3.  **Prevents Overfitting**: The regularization shrinks coefficients toward zero, reducing model complexity.
+
+#### Practical Implementation
+
+The λ parameter is typically chosen through **cross-validation** - you'd fit LASSO models across a range of λ values and select the one that minimizes prediction error on held-out data. This process is called **hyperparameter tuning**.
+
+In your education research context, imagine predicting student outcomes using dozens of demographic, behavioral, and academic features. LASSO would help you identify which features actually matter while creating a model that generalizes well to new students.
+
+### Modeling
+
+#### Prepare your feature matrix - glmnet requires matrix format
+
+```{r}
+#| warning: false
+#| message: false 
+
+X <- model.matrix(Price ~ Departure_Day + Departure_Month + Departure_Hour + Duration_Hours + number_of_stops +
+                    weekend +
+                    Airline + airport_code_arrival - 1, 
+                  data = flight_data8)
+```
+
+#### Extract target variable
+
+```{r}
+#| warning: false
+#| message: false 
+
+y <- flight_data8$Price
+```
+
+#### Fit LASSO regression across lambda values
+
+```{r}
+#| warning: false
+#| message: false 
+
+lasso_flight <- glmnet(X, y, alpha = 1)
+```
+
+#### Use cross-validation to find optimal lambda
+
+```{r}
+#| warning: false
+#| message: false 
+
+cv_lasso_flight <- cv.glmnet(X, y, alpha = 1, nfolds = 10)
+```
+
+#### Plot cross-validation results
+
+**Reading Your CV Plot**
+
+The two vertical dashed lines are crucial:
+
+-   Left line (lambda.min): The λ value that minimizes cross-validation error - gives you the best predictive performance
+
+-   Right line (lambda.1se): A more conservative choice - the largest λ within one standard error of the minimum. This is the *"one standard error rule"*
+
+**The numbers at the top (0, 1, 2, 3, etc.)** show how many features remain in the model at each λ value. Notice how:
+
+-   Far left: All \~21 features are included (minimal regularization)
+
+-   Far right: Only a few features survive the heavy regularization
+
+-   Your optimal models (between the lines) use roughly 15-21 features
+
+**Key Takeaway for Your Flight Price Model**
+
+Your CV curve shows a classic pattern - error decreases as you add regularization (moving right), reaches a minimum, then starts increasing again as you over-regularize. The relatively flat bottom suggests your model is robust across a range of λ values.
+
+```{r}
+#| warning: false
+#| message: false 
+
+plot(cv_lasso_flight)
+```
+
+#### Extract optimal lambda values
+
+```{r}
+#| warning: false
+#| message: false 
+
+lambda_min <- cv_lasso_flight$lambda.min      
+lambda_1se <- cv_lasso_flight$lambda.1se  
+```
+
+#### Fit final model with optimal lambda
+
+```{r}
+#| warning: false
+#| message: false 
+
+final_flight_model <- glmnet(X, y, alpha = 1, lambda = lambda_min)
+```
+
+#### View selected features (non-zero coefficients)
+
+**LASSO Results Analysis** Your model selected 20 meaningful features out of the original set:
+
+Most important price drivers:
+
+-   Jet Airways Business (+47,520!) and number of stops (+3,007)
+
+-   Seasonal effects: Departure month (-632) suggests cheaper flights later in year
+
+-   Carrier effects: Clear premium hierarchy (Jet Airways Business \>\> Vistara \>\> Air India \>\> budget carriers)
+
+-   Route effects: HYD arrival is cheaper (-1,391) than CCU/DEL
+
+```{r}
+#| echo: false
+#| warning: false
+#| message: false 
+
+selected_coefs <- coef(final_flight_model)
+non_zero_coefs <- selected_coefs[selected_coefs[,1] != 0, , drop = FALSE]
+
+# Create a clean data frame for the table
+coef_df <- data.frame(
+  Feature = rownames(non_zero_coefs),
+  Coefficient = as.numeric(non_zero_coefs[,1])
+) %>%
+  mutate(
+    Coefficient = round(Coefficient, 2),
+    Feature = gsub("^([a-zA-Z_]+)", "\\1: ", Feature),  # Clean up feature names
+    Feature = gsub(":", ": ", Feature)
+  )
+
+# Create formatted table with kableExtra
+coef_df %>%
+  kbl(caption = "LASSO Selected Features and Coefficients",
+      col.names = c("Feature", "Coefficient")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+                full_width = FALSE,
+                position = "left",
+                fixed_thead = TRUE) %>%
+  row_spec(0, bold = TRUE, background = "#f8f9fa") %>%
+  column_spec(1, width = "200px") %>%
+  column_spec(2, width = "100px", bold = TRUE)
+```
+
+#### Compare number of features: original vs LASSO-selected
+
+```{r}
+#| echo: false
+#| warning: false
+#| message: false 
+
+cat("Original model features:", ncol(X), "\n")
+cat("LASSO selected features:", sum(coef(final_flight_model)[,1] != 0) - 1, "\n")  # -1 for intercept
+```
+
+### Model Performance Metrics
+
+#### Essential Performance Metrics
+
+##### Make predictions on your data
+
+```{r}
+#| warning: false
+#| message: false 
+
+lasso_predictions <- predict(final_flight_model, newx = X)
+```
+
+##### Calculate core regression metrics
+
+```{r}
+#| warning: false
+#| message: false 
+
+rmse_lasso <- sqrt(mean((y - lasso_predictions)^2))
+mae_lasso <- mean(abs(y - lasso_predictions))
+r_squared_lasso <- cor(y, lasso_predictions)^2
+```
+
+##### Results
+
+```{r}
+#| echo: false
+#| warning: false
+#| message: false 
+
+cat("LASSO Performance Metrics:\n")
+cat("RMSE (Root Mean Squared Error):", round(rmse_lasso, 2), "\n")
+cat("MAE (Mean Absolute Error):", round(mae_lasso, 2), "\n") 
+cat("R-squared:", round(r_squared_lasso, 4), "\n")
+cat("Mean flight price:", round(mean(y), 2), "\n")
+cat("RMSE as % of mean price:", round(rmse_lasso/mean(y) * 100, 1), "%\n")
+```
+
+#### Cross-Validation Performance
+
+##### Get CV performance at optimal lambda
+
+```{r}
+#| warning: false
+#| message: false 
+
+cv_rmse <- sqrt(cv_lasso_flight$cvm[cv_lasso_flight$lambda == lambda_min])
+cv_rmse_1se <- sqrt(cv_lasso_flight$cvm[cv_lasso_flight$lambda == lambda_1se])
+```
+
+```{r}
+#| echo: false
+#| warning: false
+#| message: false 
+
+cat("\nCross-Validation Performance:\n")
+cat("CV RMSE at lambda.min:", round(cv_rmse, 2), "\n")
+cat("CV RMSE at lambda.1se:", round(cv_rmse_1se, 2), "\n")
+```
+
+#### Baseline Comparison
+
+##### Simple baseline: predict mean price for everything
+
+```{r}
+#| warning: false
+#| message: false 
+
+baseline_rmse <- sqrt(mean((y - mean(y))^2))
+```
+
+##### Improvement over baseline
+
+```{r}
+#| warning: false
+#| message: false 
+
+improvement <- (baseline_rmse - rmse_lasso) / baseline_rmse * 100
+```
+
+```{r}
+#| echo: false
+#| warning: false
+#| message: false 
+
+cat("\nModel Comparison:\n")
+cat("Baseline RMSE (predicting mean):", round(baseline_rmse, 2), "\n")
+cat("LASSO improvement over baseline:", round(improvement, 1), "%\n")
+```
+
+#### Prediction Quality Insights
+
+##### Look at prediction vs actual scatter
+
+```{r}
+#| warning: false
+#| message: false 
+
+plot(lasso_predictions, y, 
+     xlab = "Predicted Price", ylab = "Actual Price",
+     main = "LASSO: Predicted vs Actual Flight Prices")
+abline(0, 1, col = "red", lty = 2)  # Perfect prediction line
+```
+
+##### Residual Analysis
+
+```{r}
+#| warning: false
+#| message: false 
+
+residuals <- y - lasso_predictions
+plot(lasso_predictions, residuals,
+     xlab = "Predicted Price", ylab = "Residuals",
+     main = "Residual Plot - Check for Patterns")
+abline(h = 0, col = "red", lty = 2)
+```
+
+### Summary of Model Performance
+
+#### Strong Overall Performance:
+
+-   **RMSE: ₹2,833** - Typical prediction error is about ₹2,833, which is quite reasonable for flight prices
+
+-   **31.1% RMSE relative to mean price** - This is actually good performance for pricing models, especially in a volatile market like flights
+
+-   **39.1% improvement over baseline** - This is substantial! Capturing real economic patterns, not just noise
+
+#### Cross-Validation Results (The Gold Standard)
+
+**CV RMSE of ₹2,851** is very close to your training RMSE (₹2,833), which indicates:
+
+-   **No overfitting** - Critical for deployment to new data
+
+-   **Robust model** - Performance will generalize well
+
+-   **Proper regularization** - LASSO successfully balanced bias-variance tradeoff
+
+#### Visual Diagnostics Look Great
+
+**Predicted vs Actual plot:** Shows good **heteroscedasticity** (spread increases with price) - this is normal for pricing data where expensive items have more variation.
+
+**Residual plot:** The random scatter around zero with no clear patterns suggests your model has captured the main relationships. A few **outliers** in the high-price range are expected (probably those Jet Airways Business class flights).
+
+#### Data Science Perspective
+
+Your **R² of 0.63** might seem moderate compared to controlled experiments, but for real-world pricing prediction with many unobserved factors (seat availability, competitor pricing, demand), this represents solid **predictive power**.
+
+#### Model Deployment Readiness
+
+The close agreement between training and CV performance suggests this model would perform well in production for flight price estimation. The key business insight - that airline type and number of stops are the strongest price drivers - aligns with industry knowledge.
