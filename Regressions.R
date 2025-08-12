@@ -1,5 +1,8 @@
 # Regressions like a statistician
 
+flight_data7 <- read_csv("flight_data_train.csv")
+flight_data7 <- as.data.frame(flight_data7)
+
 # Approach 1 
 
 # As a statistician, I would pick the variables that have the strongest relationships with the outcome, don't have too much multicollinearity, and a theoretical reason to influence Price.
