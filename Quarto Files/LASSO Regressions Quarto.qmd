@@ -280,6 +280,7 @@ Most important price drivers:
 #| echo: false
 #| warning: false
 #| message: false 
+#| fig-width: 4
 
 selected_coefs <- coef(final_flight_model)
 non_zero_coefs <- selected_coefs[selected_coefs[,1] != 0, , drop = FALSE]
@@ -295,17 +296,19 @@ coef_df <- data.frame(
     Feature = gsub(":", ": ", Feature)
   )
 
-# Create formatted table with kableExtra
 coef_df %>%
+  arrange(-Coefficient) %>%
   kbl(caption = "LASSO Selected Features and Coefficients",
-      col.names = c("Feature", "Coefficient")) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+      col.names = c("Feature", "Coefficient"),
+      table.attr = "class='kable-table'") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
                 full_width = FALSE,
                 position = "left",
-                fixed_thead = TRUE) %>%
+                fixed_thead = TRUE,
+                htmltable_class = "kable-table") %>%
   row_spec(0, bold = TRUE, background = "#f8f9fa") %>%
-  column_spec(1, width = "200px") %>%
-  column_spec(2, width = "100px", bold = TRUE)
+  column_spec(1, width = "300px", extra_css = "max-width: 300px; word-wrap: break-word;") %>%
+  column_spec(2, width = "100px", extra_css = "max-width: 100px; text-align: right;")
 ```
 
 #### Compare number of features: original vs LASSO-selected
