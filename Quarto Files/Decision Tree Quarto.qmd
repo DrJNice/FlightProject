@@ -1,6 +1,16 @@
 ---
 title: "Decision Trees Quarto - Enhanced Analysis"
-format: html
+format:
+  html:
+    toc: true
+    toc-depth: 4
+    html-math-method: katex
+    fontsize: 11pt
+    fig-width: 8
+    fig-height: 6
+    df-print: paged
+    code-overflow: wrap
+    self-contained: true
 editor: visual
 ---
 
@@ -252,7 +262,7 @@ model_deep <- rpart(
   method = "anova",
   minsplit = 8,   # Minimum observations to attempt split
   minbucket = 2,  # Minimum observations in terminal nodes  
-  maxdepth = 30   # Maximum tree depth
+  maxdepth = 30,  # Maximum tree depth
 )
 ```
 
@@ -275,6 +285,53 @@ plotcp(model_deep)
 ```
 
 **Deep Model Insights:** - Despite allowing much deeper trees (maxdepth = 30), the model only grew to 10 splits - showing natural complexity limits - **Surprisingly, this model performed best** on test data, suggesting the additional complexity captured meaningful pricing patterns - The complexity parameter plot shows the algorithm found optimal depth around 10-11 splits - **Key finding**: Airline pricing is more complex than initially assumed, but still follows interpretable rules
+
+## Overfitted Tree Model
+
+Since my goal is to learn and explore data science techniques in R, I want to explore how deep a decision tree could go. So, I'll set an infinite complexity parameter (cp = -1). 
+
+This would not be a model I would choose for comparison and is purely for exploratory analysis.
+
+```{r overfit-model}
+#| label: overfit-model
+#| warning: false
+#| message: false 
+
+# Deep tree with relaxed constraints
+model_overfit <- rpart(
+  Price ~ Departure_Day + Departure_Month + Departure_Hour + Duration_Hours + 
+         number_of_stops + weekend + Date_of_Journey + departure_date_time + 
+         arrival_date_time + Airline + airport_code_arrival + 
+         airport_code_departure + airport_code_first_stop + 
+         airport_code_second_stop + airport_code_third_stop,
+  data = flight_data_train_processed, 
+  method = "anova",
+  minsplit = 8,   # Minimum observations to attempt split
+  minbucket = 2,  # Minimum observations in terminal nodes  
+  maxdepth = 30,  # Maximum tree depth
+   cp = -1
+)
+```
+
+```{r}
+#| warning: false
+#| message: false 
+#| echo: false
+
+options(max.print = 100)
+
+print("=== Overfitted Model Summary ===")
+printcp(model_overfit)
+```
+
+```{r overfit-visualization}
+#| label: overfit-visualization
+#| warning: false
+#| message: false 
+#| fig-cap: "Overfitted Tree Complexity Analysis"
+
+plotcp(model_overfit)
+```
 
 # Model Comparison
 
@@ -302,7 +359,8 @@ evaluate_model <- function(model, test_data, model_name) {
 model_comparison <- bind_rows(
   evaluate_model(model_baseline, flight_data_test_processed, "Baseline"),
   evaluate_model(model_enhanced, flight_data_test_processed, "Enhanced"), 
-  evaluate_model(model_deep, flight_data_test_processed, "Deep")
+  evaluate_model(model_deep, flight_data_test_processed, "Deep"),
+  evaluate_model(model_overfit, flight_data_test_processed, "Overfitted")
 )
 
 ```
@@ -318,6 +376,7 @@ model_comparison
 
 **Model Comparison Insights:** The results reveal an interesting progression:
 
+-   **Clear Overfit**: The overfitted model performed as expected, but is indeed overfitted. 
 -   **Deep model wins**: Despite allowing deeper complexity, the deep model achieved the best test performance (R² = 0.711) without overfitting
 -   **Meaningful complexity**: Each model improvement captured real pricing patterns:
     -   Baseline (64.9% R²): Basic route and airline effects
@@ -328,7 +387,7 @@ model_comparison
 
 This suggests that airline pricing has more complexity than initially apparent, and the deeper tree successfully captures additional interactions.
 
-# Model Evaluation (Using Best Model)
+# Model Evaluation (Using Deep Model)
 
 ```{r model-evaluation}
 #| label: model-evaluation
