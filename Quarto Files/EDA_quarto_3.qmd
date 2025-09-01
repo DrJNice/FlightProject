@@ -9,6 +9,7 @@ format:
     fig-width: 8
     fig-height: 6
     df-print: paged
+    self-contained: true
 editor: visual
 ---
 
@@ -82,7 +83,8 @@ library(kableExtra)
 #| echo: false
 #| warning: false
 #| message: false 
-flight_data <- read_excel("Data_Train.xlsx")
+
+flight_data <- read_excel("~/FlightProject/Data_Train.xlsx")
 flight_data <- as.data.frame(flight_data)
 ```
 
@@ -109,7 +111,7 @@ flight_data %>%
 ```
 
 **\
-Only one flight has 4 stops**
+A single flight had 4 stops, but it's somehow gone. Rolling with it**
 
 ```{r}
 #| warning: false
@@ -128,6 +130,7 @@ Check for missing Total_Stops**
 ```{r}
 #| warning: false
 #| message: false 
+
 flight_data %>% 
   filter(is.na(Total_Stops)) %>%
   kbl(caption = "Flights with missing Total_Stops") %>%
