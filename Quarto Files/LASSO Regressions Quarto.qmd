@@ -10,6 +10,7 @@ format:
     fig-height: 6
     df-print: paged
     code-overflow: wrap
+    self-contained: true
 editor: visual
 ---
 
