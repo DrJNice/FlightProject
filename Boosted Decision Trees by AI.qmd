@@ -1,0 +1,849 @@
+---
+title: "Boosted Decision Trees by AI"
+format:
+  html:
+    toc: true
+    toc-depth: 4
+    html-math-method: katex
+    fontsize: 11pt
+    fig-width: 8
+    fig-height: 6
+    df-print: paged
+    code-overflow: wrap
+    self-contained: true
+editor: visual
+---
+
+.scrolling { max-height: 300px; overflow-y: auto; max-width: 600px; }
+
+# Data Preparation
+
+```{r setup}
+#| label: setup
+#| warning: false
+#| message: false 
+
+# Load required libraries
+library(tidyverse)
+library(caTools)
+library(rpart)
+library(rpart.plot)
+library(caret)
+library(Boruta)
+library(cvms)
+library(dplyr)
+library(caret)
+library(kableExtra)
+library(gridExtra)
+```
+
+```{r}
+#| warning: false
+#| message: false 
+
+# Load training data
+flight_data_train <- read_csv("~/FlightProject/flight_data_train.csv") %>%
+  as.data.frame() %>%
+  select(-data_set_division)
+
+# Load test data  
+flight_data_test <- read_csv("~/FlightProject/flight_data_test.csv") %>%
+  as.data.frame()%>%
+  select(-data_set_division)
+
+# Display training data structure
+glimpse(flight_data_train)
+```
+
+Replacing the missing values for airport stops with NONE.
+
+```{r data-cleaning}
+#| label: data-cleaning
+#| warning: false
+#| message: false 
+
+flight_data_train <- flight_data_train %>%
+  mutate(
+    # Replace missing airport stops with "NONE" 
+    airport_code_first_stop = ifelse(is.na(airport_code_first_stop), "NONE", airport_code_first_stop),
+    airport_code_second_stop = ifelse(is.na(airport_code_second_stop), "NONE", airport_code_second_stop),
+    airport_code_third_stop = ifelse(is.na(airport_code_third_stop), "NONE", airport_code_third_stop)
+  )
+
+flight_data_test <- flight_data_test %>%
+  mutate(
+    # Replace missing airport stops with "NONE" 
+    airport_code_first_stop = ifelse(is.na(airport_code_first_stop), "NONE", airport_code_first_stop),
+    airport_code_second_stop = ifelse(is.na(airport_code_second_stop), "NONE", airport_code_second_stop),
+    airport_code_third_stop = ifelse(is.na(airport_code_third_stop), "NONE", airport_code_third_stop)
+  )
+```
+
+Feature Engineering
+
+```{r feature-engineering}
+#| label: feature-engineering
+#| warning: false
+#| message: false 
+
+# Create engineered features for training data
+flight_data_train_processed <- flight_data_train %>%
+  mutate(
+    # Convert categorical stops to numeric feature
+    number_of_stops = case_when(
+      Total_Stops == "non-stop" ~ 0,
+      Total_Stops == "1 stop" ~ 1,
+      Total_Stops == "2 stops" ~ 2,
+      Total_Stops == "3 stops" ~ 3,
+      Total_Stops == "4 stops" ~ 4
+    ),
+    # Create weekend indicator feature
+    weekend = case_when(
+      departure_day_of_week %in% c("Sunday", "Saturday") ~ "Weekend",
+      TRUE ~ "Weekday"
+    )
+  )
+
+# Apply same transformations to test data
+flight_data_test_processed <- flight_data_test %>%
+  mutate(
+    number_of_stops = case_when(
+      Total_Stops == "non-stop" ~ 0,
+      Total_Stops == "1 stop" ~ 1,
+      Total_Stops == "2 stops" ~ 2,
+      Total_Stops == "3 stops" ~ 3,
+      Total_Stops == "4 stops" ~ 4
+    ),
+    weekend = case_when(
+      departure_day_of_week %in% c("Sunday", "Saturday") ~ "Weekend",
+      TRUE ~ "Weekday"
+    )
+  )
+
+flight_data_train_processed <- flight_data_train_processed %>%
+  select(Departure_Day, Departure_Month, Departure_Hour, Duration_Hours,
+             number_of_stops, weekend, Date_of_Journey, departure_date_time,
+             arrival_date_time, Airline, airport_code_arrival,
+             airport_code_departure, airport_code_first_stop,
+             airport_code_second_stop, airport_code_third_stop, Price)
+
+flight_data_test_processed <- flight_data_test_processed %>%
+  select(Departure_Day, Departure_Month, Departure_Hour, Duration_Hours,
+             number_of_stops, weekend, Date_of_Journey, departure_date_time,
+             arrival_date_time, Airline, airport_code_arrival,
+             airport_code_departure, airport_code_first_stop,
+             airport_code_second_stop, airport_code_third_stop, Price)
+```
+
+# Initial GenAI Prompt
+
+Hey Gemini! I'm learning data science and this week I'm working on decision trees. Can you help me write the R code to make this a boosted decision tree?
+
+`Deep Decision Tree (optimal complexity)`
+
+`model_deep <- rpart(Price ~ Departure_Day + Departure_Month + Departure_Hour + Duration_Hours + number_of_stops + weekend + Date_of_Journey + departure_date_time + arrival_date_time + Airline + airport_code_arrival + airport_code_departure + airport_code_first_stop + airport_code_second_stop + airport_code_third_stop, data = flight_data_train_processed, method = "anova", minsplit = 8, minbucket = 2, maxdepth = 30)`
+
+# Gemini Response
+
+This script demonstrates how to build a boosted decision tree model using the 'xgboost' package in R.
+
+This code sets up a basic boosted model. The key is that it trains many simple trees instead of one complex one, with each tree learning from the errors of the previous ones. A great next step would be to experiment with different xgboost parameters like nrounds, max.depth, and eta to find the optimal combination for your dataset. You could also compare the performance of this model to your original rpart model using metrics like RMSE or MAE.
+
+## Step 1: Install and load the 'xgboost' package.
+
+If you don't have it installed, run the following line: install.packages("xgboost")
+
+```{r}
+#| message: false 
+
+library(xgboost)
+
+```
+
+## Step 2: Prepare the data for xgboost.
+
+The 'xgboost' library requires the data to be in a matrix format. We will separate the target variable (Price) from the predictor variables.
+
+Define the predictor variables (features).
+
+```{r}
+#| message: false 
+
+features <- c("Departure_Day", "Departure_Month", "Departure_Hour", "Duration_Hours",
+             "number_of_stops", "weekend", "Date_of_Journey", "departure_date_time",
+             "arrival_date_time", "Airline", "airport_code_arrival",
+             "airport_code_departure", "airport_code_first_stop",
+             "airport_code_second_stop", "airport_code_third_stop")
+
+```
+
+Separate the features and the target variable (Price). The target variable should be a numeric vector.
+
+```{r}
+#| message: false 
+
+target <- flight_data_train_processed$Price
+
+```
+
+Convert the data frame of features into a matrix. This is a required step for xgboost.
+
+Note: You may need to handle categorical variables by converting them to factors and then using one-hot encoding or a similar method before converting to a matrix. For simplicity, this example assumes they are already handled.
+
+```{r}
+#| message: false 
+
+flight_data_train_processed_test <- mutate_if(flight_data_train_processed, is.character, as.factor)
+
+flight_data_train_processed_test <- flight_data_train_processed_test %>%
+  mutate(departure_date_time = as.numeric(departure_date_time),
+         arrival_date_time = as.numeric(arrival_date_time))
+
+```
+
+```{r}
+#| message: false
+
+features_matrix <- as.matrix(flight_data_train_processed_test)
+
+head(features_matrix)
+
+```
+
+### Code Error: Julie Updated
+
+As you can see from the summary above, the converting of my data to a features matrix using this code didn't work. There should theoretically only be numeric values. I went back to Gemini to troubleshoot.
+
+```{r}
+#| message: false 
+
+# Load library
+library(Matrix)
+
+# One-hot encode the categorical variables 
+# You can select the categorical columns automatically or by name
+categorical_cols <- c("weekend", "Date_of_Journey", "Airline", "airport_code_arrival",
+                      "airport_code_departure", "airport_code_first_stop",
+                      "airport_code_second_stop", "airport_code_third_stop")
+
+# Create a sparse matrix with one-hot encoding
+# The sparse.model.matrix function is excellent for this as it handles factors
+features_matrix <- sparse.model.matrix(
+  ~ . - 1,  # The '~ . - 1' formula tells R to encode all columns except the intercept
+  data = flight_data_train_processed[, features]
+)
+
+head(features_matrix)
+
+```
+
+## Step 3: Create an xgb.DMatrix object.
+
+This is the internal data structure used by xgboost for efficiency.
+
+```{r}
+
+dtrain <- xgb.DMatrix(data = features_matrix, label = target)
+
+dtrain
+
+```
+
+## Step 4: Define the model parameters and train the boosted tree model.
+
+The `max.depth` parameter is set to a small value (e.g., 3) because boosted trees typically use many shallow trees, not one deep one.
+
+```{r}
+#| message: false 
+
+params <- list(
+ objective = "reg:squarederror", #Specifies the learning task and objective (regression for price prediction).
+ eta = 0.1,                      #The learning rate, a lower value means a more robust model.
+ max.depth = 3,                  #The maximum depth of each tree.
+ subsample = 0.8,                #Subsample ratio of the training instance.
+ colsample_bytree = 0.8          #Subsample ratio of columns when constructing each tree.
+)
+
+```
+
+Train the model.
+
+`nrounds` is the number of boosting iterations, i.e., the number of trees. A higher number can lead to better performance but also overfitting.
+
+```{r}
+#| message: false 
+#| output: false
+
+bst_model <- xgboost(
+ params = params,
+ data = dtrain,
+ nrounds = 200,
+ verbose = 1 # Set to 0 to suppress training messages.
+)
+
+```
+
+## Step 5: Make predictions on new data.
+
+Assuming you have a test dataset named `flight_data_test_processed`. Make sure to convert the test data to a matrix in the same way as the training data.
+
+### Code Error: Julie Updated
+
+I was getting an error trying to compare the features in the bst_model didn't align to the test matrix I made.
+
+**Gemini's Feedback**
+
+Why the Error Occurs
+
+The sparse.model.matrix function automatically creates a column for each unique category it finds in the data you give it.
+
+-   When you ran sparse.model.matrix on your training data, it created a sparse matrix with 143 columns. This number represents all the one-hot encoded categories found in the training set.
+
+-   When you ran the same code on your test data, sparse.model.matrix only created columns for the categories present in the test set. If a category from the training set isn't in the test set, no column is created for it. This results in the test matrix having 118 columns, a different number than the training matrix.
+
+-   XGBoost requires the exact same features and order for both training and prediction.
+
+**The Solution**
+
+To fix this, you must ensure that both the training and test matrices have the **same columns**. The easiest way to do this is to get the column names from the training matrix and apply them to the test matrix.
+
+```{r}
+#| message: false 
+
+# Assuming you have a test dataset named 'flight_data_test_processed'.
+# Make sure to convert the test data to a matrix in the same way as the training data.
+
+# One-hot encode the categorical variables
+# You can select the categorical columns automatically or by name
+categorical_cols <- c("weekend", "Date_of_Journey", "Airline", "airport_code_arrival",
+                      "airport_code_departure", "airport_code_first_stop",
+                      "airport_code_second_stop", "airport_code_third_stop")
+
+# Create a sparse matrix for the test data
+# The sparse.model.matrix function is excellent for this as it handles factors
+test_features_matrix <- sparse.model.matrix(
+  ~ . - 1, # The '~ . - 1' formula tells R to encode all columns except the intercept
+  data = flight_data_test_processed[, features]
+)
+
+# Align test data columns with training data columns
+# This is the crucial step!
+# Get the feature names from the training data matrix
+train_features <- colnames(features_matrix)
+
+# Get the feature names from the test data matrix
+test_features <- colnames(test_features_matrix)
+
+# Find features that are missing from the test data but are in the training data
+missing_features <- setdiff(train_features, test_features)
+
+# Create a sparse matrix of zeros for the missing features
+missing_matrix <- Matrix::Matrix(0, nrow = nrow(test_features_matrix), ncol = length(missing_features), dimnames = list(NULL, missing_features), sparse = TRUE)
+
+# Bind the missing features to the test matrix
+test_features_matrix_aligned <- cbind(test_features_matrix, missing_matrix)
+
+# Reorder the columns of the aligned test matrix to match the training matrix
+test_features_matrix_aligned <- test_features_matrix_aligned[, train_features]
+
+# Create the xgb.DMatrix object for the aligned test data
+dtest <- xgb.DMatrix(data = test_features_matrix_aligned)
+
+# Now, prediction should work without error
+predictions <- predict(bst_model, dtest)
+
+```
+
+You can now analyze the performance of your boosted model. For example, you can print the model to see a summary.
+
+```{r}
+#| message: false 
+
+print(bst_model)
+
+```
+
+## Step 6: Julie asks Gemini for Model Validation code
+
+### 1. Prepare the Data for Cross-Validation
+
+First, you need to combine your training and test datasets into one for cross-validation. For this example, let's assume 'flight_data_full' is the combined dataset. The code below is a placeholder. You will need to make sure you have the combined dataset. For instance, if you have 'flight_data_train_processed' and 'flight_data_test_processed', you can combine them like this:
+
+```{r}
+#| message: false 
+
+flight_data_full <- rbind(flight_data_train_processed, flight_data_test_processed)
+
+```
+
+Define the features (same as before)
+
+```{r}
+#| message: false 
+
+# 
+features <- c("Departure_Day", "Departure_Month", "Departure_Hour", "Duration_Hours",
+              "number_of_stops", "weekend", "Date_of_Journey", "departure_date_time",
+              "arrival_date_time", "Airline", "airport_code_arrival",
+              "airport_code_departure", "airport_code_first_stop",
+              "airport_code_second_stop", "airport_code_third_stop")
+
+# Define the target
+target_full <- flight_data_full$Price
+
+```
+
+One-hot encode the categorical variables in the full dataset. Using the full dataset for one-hot encoding ensures all categories across both train and test sets are included.
+
+```{r}
+#| message: false 
+
+features_matrix_full <- sparse.model.matrix(
+  ~ . - 1,
+  data = flight_data_full[, features]
+)
+```
+
+Create the xgb.DMatrix object for the full dataset
+
+```{r}
+#| message: false 
+
+d_full <- xgb.DMatrix(data = features_matrix_full, label = target_full)
+
+```
+
+### 2. K-Fold Cross-Validation
+
+Cross-validation gives a more reliable performance estimate than a single train/test split. We will use xgb.cv() to perform a 5-fold cross-validation.
+
+Define the same model parameters as before
+
+```{r}
+#| message: false 
+
+params <- list(
+  objective = "reg:squarederror",
+  eta = 0.1,
+  max_depth = 3,
+  subsample = 0.8,
+  colsample_bytree = 0.8
+)
+
+```
+
+Perform cross-validation
+
+```{r}
+#| message: false 
+
+set.seed(42) # For reproducibility
+
+cv_model <- xgb.cv(
+  params = params,
+  data = d_full,
+  nrounds = 200,
+  nfold = 5,
+  showsd = T,
+  stratified = T,
+  print_every_n = 10,
+  early_stopping_rounds = 10,
+  metrics = "rmse"
+)
+
+```
+
+Print the cross-validation results
+
+```{r}
+#| message: false 
+
+print(cv_model)
+
+```
+
+### 3. Feature Importance Analysis
+
+A trained model is required for this step. We'll use your previously trained 'bst_model'. This code assumes 'bst_model' and 'features_matrix' are in your environment from the last session.
+
+Get feature importance information
+
+```{r}
+#| message: false 
+
+importance_matrix <- xgb.importance(model = bst_model)
+
+```
+
+View the top 10 most important features
+
+```{r}
+#| message: false 
+
+print(importance_matrix[1:10,])
+
+```
+
+Plot feature importance
+
+```{r}
+#| message: false 
+
+xgb.plot.importance(importance_matrix)
+
+```
+
+### 4. Residual Analysis
+
+This step helps to diagnose if there are any patterns in the model's errors. We will use the predictions on the test dataset you made previously. This code assumes 'predictions' and 'flight_data_test_processed' are in your environment.
+
+Get the actual prices from the test data
+
+```{r}
+#| message: false 
+
+actual_prices <- flight_data_test_processed$Price
+
+```
+
+Calculate the residuals (actuals minus predictions)
+
+```{r}
+#| message: false 
+
+residuals <- actual_prices - predictions
+
+```
+
+Create a data frame for plotting
+
+```{r}
+#| message: false 
+
+residuals_df <- data.frame(
+  predictions = predictions,
+  residuals = residuals
+)
+
+```
+
+Create a scatter plot of predicted values vs. residuals
+
+```{r}
+#| message: false 
+
+ggplot(residuals_df, aes(x = predictions, y = residuals)) +
+  geom_point(alpha = 0.5, color = "dodgerblue") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(
+    title = "Residual Plot",
+    x = "Predicted Price",
+    y = "Residuals (Actual - Predicted)"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+## Gemini Summary
+
+This output summarizes your trained XGBoost model. It confirms the model's structure, the parameters used for training, and how its performance improved over the boosting iterations.
+
+**Key Model Details**
+
+The output provides a clear overview of the xgb.Booster object, which is the trained XGBoost model.
+
+-   \# of features: 143: This confirms that the model was trained using 143 features. This is a crucial detail, as it matches the number of columns in your one-hot encoded training data matrix.
+
+-   niter: 200: The model was trained for 200 boosting rounds (nrounds). Each round adds a new decision tree to the model to correct the errors of the previous trees.
+
+-   nfeatures: 143: This is another check, confirming the number of features used to build the trees.
+
+**Parameters Used for Training**
+
+The params section lists the hyperparameters you defined for the model. These settings control the learning process and the structure of the trees.
+
+-   objective = "reg:squarederror": This is the learning task. It tells the model to perform a regression and minimize the squared error between the predicted and actual values. This is appropriate for your task of predicting flight prices.
+
+-   eta = "0.1": This is the learning rate. A smaller value, like 0.1, means the model takes smaller steps during each boosting round, which can lead to a more robust model that is less prone to overfitting.
+
+-   max_depth = "3": This sets the maximum depth of each tree to 3. XGBoost uses many shallow trees rather than a few very deep ones, which helps prevent the model from becoming too complex and overfitting the training data.
+
+-   subsample = "0.8": This means that for each boosting iteration, the model randomly samples 80% of the training data to build the new tree. This helps reduce variance and prevent overfitting.
+
+-   colsample_bytree = "0.8": For each tree, the model randomly samples 80% of the features. This also helps to prevent overfitting by making the trees more diverse.
+
+**Evaluation Log (train-rmse)**
+
+The table shows the train-rmse (Root Mean Squared Error on the training data) at different iterations. It demonstrates how the model's performance improved as more trees were added.
+
+-   iter: The iteration number (or boosting round).
+
+-   train-rmse: The RMSE calculated on the training data at that specific iteration.
+
+Notice that the train-rmse decreases with each iteration, which is the expected behavior. This indicates that the model is successfully learning from the training data and reducing its error over time. The RMSE starts at 9280.95 and drops to 4368.359 after just 10 iterations. If you had printed more iterations, you would see this trend continue. This log is a good way to check if the model is learning effectively and to monitor for signs of overfitting if you had a validation set.
+
+1.  **Cross-Validation Results**
+
+The xgb.cv output shows how your model performs across different folds of your data.
+
+-   Training Performance (train-rmse-mean): The average training RMSE across the 5 folds starts at 9253 and steadily decreases, ending at 1751. This confirms the model is learning effectively.
+
+-   Validation Performance (test-rmse-mean): The average validation RMSE starts high but also decreases, ending at 1902. This is the most important number because it gives you a robust estimate of how well your model performs on truly unseen data.
+
+-   Overfitting: There is a small gap between the final training RMSE (1751) and the validation RMSE (1902). This indicates a slight degree of overfitting, which is normal. The model is performing slightly better on the data it has seen than on new data, but the difference is not a major concern.
+
+2.  **Feature Importance**
+
+The feature importance chart and table are very insightful. They show you which features are most influential in predicting flight prices.
+
+-   Duration_Hours: This feature has the highest Gain at 0.45, making it the single most important factor. This makes intuitive sense, as longer flights are often more expensive.
+
+-   Time-Related Features: arrival_date_time (0.166) and departure_date_time (0.054) are also highly important, which aligns with how time of day and year can affect pricing.
+
+-   Airline and number_of_stops: Certain airlines like Jet Airways (0.073) and the number of stops (0.050) are significant predictors, which is expected. The airport_code_first_stopBOM is also important, suggesting that a flight with a stopover in Mumbai (BOM) has a unique price dynamic.
+
+3.  **Residual Analysis**
+
+The residual plot is a key diagnostic tool.
+
+-   The plot shows the errors (residuals) of your model's predictions. Ideally, these should form a random cloud around the red dashed line at y=0.
+
+-   The plot generally looks good, with the errors scattered around zero. However, there is a visible funnel shape or heteroscedasticity, where the errors are larger for higher-priced flights. This suggests your model's predictions for more expensive flights are less accurate than for lower-priced flights. This is a common challenge in regression tasks.
+
+**Overall Conclusion**
+
+Your XGBoost model is performing well. The cross-validation results show that it generalizes robustly to unseen data with an average RMSE of around 1902. The feature importance analysis provides clear business insights, confirming that Duration_Hours is the most significant factor. The residual plot, while showing a slight increase in error for higher prices, confirms that the model is not systematically biased.
+
+You've successfully built a reliable and well-validated predictive model.
+
+# Regular Claude Response
+
+For boosting in R, you'll want to use the gbm package (Gradient Boosting Machine) or xgboost. Here are both approaches:
+
+## Option 1: Boosted decision tree with gbm package
+
+```{r}
+#| message: false 
+
+library(gbm)
+
+```
+
+
+### Code Error: Data is having the same issue as before with the variables not being continuous
+
+Going to go about it in a more manual way
+
+```{r}
+#| message: false 
+  
+# Making sure all of the airport codes have the same numeric value
+
+airport_code_bind <- flight_data_train_processed %>%
+  mutate(id = row_number()) %>%
+  select(id, airport_code_arrival, airport_code_departure, 
+          airport_code_first_stop, airport_code_second_stop, 
+          airport_code_third_stop) %>%
+  pivot_longer(!id, names_to = "item", values_to = "response") %>%
+  mutate(item = paste0(item, "_numeric"),
+         response_numeric = as.numeric(as.factor(response))) %>%
+  pivot_wider(id_cols = id, names_from = item, values_from = response_numeric)
+
+flight_data_train_processed <- cbind(flight_data_train_processed, airport_code_bind)
+
+
+flight_data_train_processed$Airline_numeric <- as.numeric(factor(
+  flight_data_train_processed$Airline))
+
+flight_data_train_processed$weekend_numeric <- as.numeric(factor(
+  flight_data_train_processed$weekend))
+
+flight_data_train_processed$departure_date_time_numeric <- as.numeric(flight_data_train_processed$departure_date_time)
+
+flight_data_train_processed$arrival_date_time_numeric <- as.numeric(flight_data_train_processed$arrival_date_time)
+
+flight_data_train_processed$Date_of_Journey_numeric <- as.numeric(as.factor(as.character(flight_data_train_processed$Date_of_Journey)))
+
+```
+
+
+```{r}
+#| message: false 
+
+# Making sure all of the airport codes have the same numeric value
+
+airport_code_bind <- flight_data_test_processed %>%
+  mutate(id = row_number()) %>%
+  select(id, airport_code_arrival, airport_code_departure, 
+          airport_code_first_stop, airport_code_second_stop, 
+          airport_code_third_stop) %>%
+  pivot_longer(!id, names_to = "item", values_to = "response") %>%
+  mutate(item = paste0(item, "_numeric"),
+         response_numeric = as.numeric(as.factor(response))) %>%
+  pivot_wider(id_cols = id, names_from = item, values_from = response_numeric)
+
+flight_data_test_processed <- cbind(flight_data_test_processed, airport_code_bind)
+
+
+flight_data_test_processed$Airline_numeric <- as.numeric(factor(
+  flight_data_test_processed$Airline))
+
+flight_data_test_processed$weekend_numeric <- as.numeric(factor(
+  flight_data_test_processed$weekend))
+
+flight_data_test_processed$departure_date_time_numeric <- as.numeric(flight_data_test_processed$departure_date_time)
+
+flight_data_test_processed$arrival_date_time_numeric <- as.numeric(flight_data_test_processed$arrival_date_time)
+
+flight_data_test_processed$Date_of_Journey_numeric <- as.numeric(as.factor(as.character(flight_data_test_processed$Date_of_Journey)))
+
+```
+
+```{r}
+#| message: false 
+
+model_boosted_gbm <- gbm(
+  Price ~ Departure_Day + Departure_Month + Departure_Hour + 
+          Duration_Hours + number_of_stops + weekend_numeric + Date_of_Journey_numeric + 
+          departure_date_time_numeric + arrival_date_time_numeric + Airline_numeric + 
+          airport_code_arrival_numeric + airport_code_departure_numeric + 
+          airport_code_first_stop_numeric + airport_code_second_stop_numeric + 
+          airport_code_third_stop_numeric,
+  data = flight_data_train_processed,
+  distribution = "gaussian",  # for regression (since you're predicting Price)
+  n.trees = 1000,            # number of boosting iterations
+  interaction.depth = 4,      # maximum depth of each tree
+  shrinkage = 0.01,          # learning rate
+  bag.fraction = 0.8,        # fraction of training data for each tree
+  train.fraction = 1.0,      # fraction of data for training
+  n.minobsinnode = 10,       # minimum observations in terminal nodes
+  cv.folds = 5,              # cross-validation folds
+  verbose = TRUE
+)
+
+```
+
+Find optimal number of trees
+
+```{r}
+#| message: false 
+
+best_iter_gbm <- gbm.perf(model_boosted_gbm, method = "cv")
+print(paste("Optimal number of trees (gbm):", best_iter_gbm))
+
+
+```
+
+Make predictions
+
+```{r}
+#| message: false 
+
+predictions_gbm <- predict(model_boosted_gbm, 
+                          newdata = flight_data_test_processed, 
+                          n.trees = best_iter_gbm)
+
+```
+
+Variable importance
+
+```{r}
+#| message: false 
+#| fig-height: 6
+
+summary(model_boosted_gbm, n.trees = best_iter_gbm)
+
+```
+## Option 1: BM Model Evaluation
+
+```{r}
+#| message: false 
+
+
+
+```
+
+```{r}
+#| message: false 
+
+
+
+```
+
+```{r}
+#| message: false 
+
+
+
+```
+
+```{r}
+#| message: false 
+
+
+
+```
+
+```{r}
+#| message: false 
+
+
+
+```
+
+```{r}
+#| message: false 
+
+
+
+```
+
+```{r}
+#| message: false 
+
+
+
+```
+
+```{r}
+#| message: false 
+
+
+
+```
+
+```{r}
+#| message: false 
+
+
+
+```
+
+```{r}
+#| message: false 
+
+
+
+```
+
+```{r}
+#| message: false 
+
+
+
+```
+
+```{r}
+#| message: false 
+
+
+
+```
+
+```{r}
+#| message: false 
+
+
+
+```
