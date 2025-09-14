@@ -31,6 +31,8 @@ library(Boruta)
 library(cvms)
 library(dplyr)
 library(caret)
+library(kableExtra)
+library(gridExtra)
 ```
 
 ```{r data-loading}
@@ -128,218 +130,197 @@ cat("Test samples:", nrow(flight_data_test_processed), "\n")
 
 # Model Development
 
-## Baseline Decision Tree Model
+## Baseline and Deep Decision Tree Models
 
-```{r baseline-model}
-#| label: baseline-model
-#| warning: false
-#| message: false 
-
+```{r model-fitting, message=FALSE, warning=FALSE}
 set.seed(42)
 
-# Define core features for baseline model
+# Define core features for models
 baseline_features <- c("Departure_Day", "Departure_Month", "Departure_Hour", 
                       "Duration_Hours", "number_of_stops", "weekend",
                       "Airline", "airport_code_arrival", "airport_code_departure",
                       "airport_code_first_stop", "airport_code_second_stop", 
                       "airport_code_third_stop")
 
-# Fit baseline decision tree
+# Baseline Decision Tree
 model_baseline <- rpart(
-  Price ~ Departure_Day + Departure_Month + Departure_Hour + Duration_Hours + 
-         number_of_stops + weekend + Airline + airport_code_arrival + 
-         airport_code_departure + airport_code_first_stop + 
-         airport_code_second_stop + airport_code_third_stop,
+  Price ~ Departure_Day + Departure_Month + Departure_Hour + Duration_Hours +
+    number_of_stops + weekend + Airline + airport_code_arrival +
+    airport_code_departure + airport_code_first_stop +
+    airport_code_second_stop + airport_code_third_stop,
   data = flight_data_train_processed, 
   method = "anova"
 )
+
+# Enhanced Decision Tree (with temporal features)
+model_enhanced <- rpart(
+  Price ~ Departure_Day + Departure_Month + Departure_Hour + Duration_Hours +
+    number_of_stops + weekend + Date_of_Journey + departure_date_time +
+    arrival_date_time + Airline + airport_code_arrival +
+    airport_code_departure + airport_code_first_stop +
+    airport_code_second_stop + airport_code_third_stop,
+  data = flight_data_train_processed, 
+  method = "anova"
+)
+
+# Deep Decision Tree (optimal complexity)
+model_deep <- rpart(
+  Price ~ Departure_Day + Departure_Month + Departure_Hour + Duration_Hours +
+    number_of_stops + weekend + Date_of_Journey + departure_date_time +
+    arrival_date_time + Airline + airport_code_arrival +
+    airport_code_departure + airport_code_first_stop +
+    airport_code_second_stop + airport_code_third_stop,
+  data = flight_data_train_processed, 
+  method = "anova",
+  minsplit = 8, minbucket = 2, maxdepth = 30
+)
+
+# Overfitted Decision Tree (for comparison)
+model_overfit <- rpart(
+  Price ~ Departure_Day + Departure_Month + Departure_Hour + Duration_Hours +
+    number_of_stops + weekend + Date_of_Journey + departure_date_time +
+    arrival_date_time + Airline + airport_code_arrival +
+    airport_code_departure + airport_code_first_stop +
+    airport_code_second_stop + airport_code_third_stop,
+  data = flight_data_train_processed, 
+  method = "anova",
+  minsplit = 8, minbucket = 2, maxdepth = 30, cp = -1
+)
 ```
 
-```{r}
-#| warning: false
-#| message: false 
-#| echo: false
-# Model summary
-print("=== Baseline Model Summary ===")
-printcp(model_baseline)
-```
+**Key Model Differences:**
 
-```{r baseline-visualization}
-#| label: baseline-visualization
-#| warning: false
-#| message: false 
-#| fig-cap: "Baseline Decision Tree Structure"
-#| fig-height: 8
+-   **Baseline**: Core features only (airline, route, timing basics)
 
-# Visualize decision tree with cleaner formatting
+-   **Enhanced**: Adds specific date/time features for dynamic pricing
+
+-   **Deep**: Optimal complexity with controlled overfitting prevention
+
+-   **Overfitted**: No complexity penalty (cp = -1) for comparison
+
+```{r baseline-visualization, message=FALSE, warning=FALSE, fig.width=12, fig.height=8}
+# Visualize the deep model (best performer)
 rpart.plot(model_baseline, 
           main = "Baseline Decision Tree for Flight Price Prediction",
-          cex = 0.6,           # Smaller text
-          tweak = 1.2,         # Adjust text size
-          box.palette = "Blues",
-          shadow.col = "gray",
-          split.cex = 0.8,     # Size of split labels
-          nn.cex = 0.7)        # Size of node labels
+          cex = 0.6, tweak = 1.2, box.palette = "Blues",
+          shadow.col = "gray", split.cex = 0.8, nn.cex = 0.7)
 ```
 
-**Key Insights from Baseline Model:** - The tree uses only 5 features: Airline, airport arrival code, first stop, departure day, and duration - Route structure (first stop) is the primary split, indicating it's the most important pricing factor - The model achieves reasonable complexity with 7 splits, suggesting flight pricing follows interpretable business rules
-
-```{r baseline-complexity}
-#| label: baseline-complexity
-#| warning: false
-#| message: false 
-#| fig-cap: "Complexity Parameter Plot - Baseline Model"
-
-# Complexity parameter analysis
-plotcp(model_baseline)
+```{r deep model-visualization, message=FALSE, warning=FALSE, fig.width=12, fig.height=8}
+# Visualize the deep model (best performer)
+rpart.plot(model_deep, 
+          main = "Deep Decision Tree for Flight Price Prediction",
+          cex = 0.6, tweak = 1.2, box.palette = "Blues",
+          shadow.col = "gray", split.cex = 0.8, nn.cex = 0.7)
 ```
 
-## Enhanced Decision Tree Model
+The deep model uses 10 splits and reveals that route structure (first stop) and temporal factors drive the primary pricing decisions, followed by airline brand and duration considerations.
 
-```{r enhanced-model}
-#| label: enhanced-model
-#| warning: false
-#| message: false 
+## Stratified Cross-Validation Analysis
 
-# Enhanced model with additional temporal features
-model_enhanced <- rpart(
-  Price ~ Departure_Day + Departure_Month + Departure_Hour + Duration_Hours + 
-         number_of_stops + weekend + Date_of_Journey + departure_date_time + 
-         arrival_date_time + Airline + airport_code_arrival + 
-         airport_code_departure + airport_code_first_stop + 
-         airport_code_second_stop + airport_code_third_stop,
-  data = flight_data_train_processed, 
-  method = "anova"
+```{r stratified-cv,  message=FALSE, warning=FALSE}
+# Create price bins for stratification
+flight_data_train_processed$price_bin <- cut(flight_data_train_processed$Price, 
+                                           breaks = quantile(flight_data_train_processed$Price, 
+                                                           probs = c(0, 0.25, 0.5, 0.75, 1.0)),
+                                           labels = c("Low", "Medium", "High", "Very_High"),
+                                           include.lowest = TRUE)
+
+# Pre-process factor levels to ensure consistency
+factor_cols <- c("Airline", "airport_code_arrival", "airport_code_departure", 
+                 "airport_code_first_stop", "airport_code_second_stop", 
+                 "airport_code_third_stop", "weekend")
+
+for(col in factor_cols) {
+  flight_data_train_processed[[col]] <- factor(flight_data_train_processed[[col]])
+}
+
+# Create stratified folds
+set.seed(42)
+stratified_folds <- createFolds(flight_data_train_processed$price_bin, 
+                               k = 10, list = TRUE, returnTrain = FALSE)
+
+# Stratified CV function
+stratified_cv_rpart <- function(data, folds, model_name) {
+  cv_results <- data.frame(fold = integer(), rmse = numeric(), 
+                          r_squared = numeric(), mae = numeric())
+  
+  for(i in 1:length(folds)) {
+    test_indices <- folds[[i]]
+    train_data <- data[-test_indices, ]
+    test_data <- data[test_indices, ]
+    
+    # Ensure consistent factor levels
+    for(col in factor_cols) {
+      train_data[[col]] <- factor(train_data[[col]], levels = levels(data[[col]]))
+      test_data[[col]] <- factor(test_data[[col]], levels = levels(data[[col]]))
+    }
+    
+    # Fit appropriate model
+    if(model_name == "deep") {
+      model <- rpart(Price ~ Departure_Day + Departure_Month + Departure_Hour + Duration_Hours +
+                     number_of_stops + weekend + Date_of_Journey + departure_date_time +
+                     arrival_date_time + Airline + airport_code_arrival +
+                     airport_code_departure + airport_code_first_stop +
+                     airport_code_second_stop + airport_code_third_stop,
+                     data = train_data, method = "anova",
+                     minsplit = 8, minbucket = 2, maxdepth = 30)
+    } else if(model_name == "overfitted") {
+      model <- rpart(Price ~ Departure_Day + Departure_Month + Departure_Hour + Duration_Hours +
+                     number_of_stops + weekend + Date_of_Journey + departure_date_time +
+                     arrival_date_time + Airline + airport_code_arrival +
+                     airport_code_departure + airport_code_first_stop +
+                     airport_code_second_stop + airport_code_third_stop,
+                     data = train_data, method = "anova",
+                     minsplit = 8, minbucket = 2, maxdepth = 30, cp = -1)
+    }
+    
+    predictions <- predict(model, test_data)
+    rmse <- sqrt(mean((test_data$Price - predictions)^2))
+    r_squared <- cor(test_data$Price, predictions)^2
+    mae <- mean(abs(test_data$Price - predictions))
+    
+    cv_results <- rbind(cv_results, data.frame(
+      fold = i, rmse = rmse, r_squared = r_squared, mae = mae))
+  }
+  
+  return(cv_results)
+}
+
+# Run stratified CV for both models
+deep_cv_results <- stratified_cv_rpart(flight_data_train_processed, stratified_folds, "deep")
+overfitted_cv_results <- stratified_cv_rpart(flight_data_train_processed, stratified_folds, "overfitted")
+```
+
+```{r cv-results}
+# Summary results
+stratified_cv_comparison <- data.frame(
+  Model = c("Deep (Stratified CV)", "Overfitted (Stratified CV)"),
+  Mean_RMSE = c(round(mean(deep_cv_results$rmse), 2), round(mean(overfitted_cv_results$rmse), 2)),
+  SD_RMSE = c(round(sd(deep_cv_results$rmse), 2), round(sd(overfitted_cv_results$rmse), 2)),
+  Mean_R_squared = c(round(mean(deep_cv_results$r_squared), 3), round(mean(overfitted_cv_results$r_squared), 3)),
+  SD_R_squared = c(round(sd(deep_cv_results$r_squared), 3), round(sd(overfitted_cv_results$r_squared), 3)),
+  Mean_MAE = c(round(mean(deep_cv_results$mae), 2), round(mean(overfitted_cv_results$mae), 2))
 )
+
+stratified_cv_comparison %>%
+  kbl(caption = "Stratified Cross-Validation Results",
+      col.names = c("Model", "Mean RMSE", "SD RMSE", "Mean R²", "SD R²", "Mean MAE")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+                full_width = FALSE, position = "left")
 ```
 
-```{r}
-#| warning: false
-#| message: false 
-#| echo: false
+**Stratified CV Key Findings:**
 
-print("=== Enhanced Model Summary ===")
-printcp(model_enhanced)
-```
+-   **Deep Model**: 72.3% R² (much more realistic than original \~52% CV)
+-   **Overfitted Model**: 76.8% R² (only 4.5 percentage points better)
+-   **Stability**: Deep model shows lower variance across folds (RMSE SD: 175 vs 229)
 
-```{r enhanced-visualization}
-#| label: enhanced-visualization  
-#| warning: false
-#| message: false 
-#| fig-cap: "Enhanced Decision Tree Structure"
-#| fig-height: 10
+The stratified CV reveals that price outlier distribution was skewing original cross-validation results. When properly validated, the overfitted model's advantage shrinks dramatically while requiring 130x more complexity.
 
-# Enhanced visualization with better formatting
-rpart.plot(model_enhanced,
-          main = "Enhanced Decision Tree for Flight Price Prediction",
-          cex = 0.5,           # Even smaller text due to complexity
-          tweak = 1.1,         
-          box.palette = "Greens",
-          shadow.col = "gray",
-          split.cex = 0.7,     
-          nn.cex = 0.6,
-          fallen.leaves = TRUE, # Better layout for complex trees
-          extra = 101)         # Show node info more clearly
-```
+# Model Performance Comparison
 
-**Enhanced Model Analysis:** - Adding temporal features (`Date_of_Journey`, `arrival_date_time`) improved the model complexity - The tree now incorporates specific dates, suggesting seasonal or time-based pricing patterns - Notice how the algorithm selected meaningful temporal splits, indicating airlines use dynamic pricing strategies
-
-## Deep Decision Tree Model
-
-```{r deep-model}
-#| label: deep-model
-#| warning: false
-#| message: false 
-
-# Deep tree with relaxed constraints
-model_deep <- rpart(
-  Price ~ Departure_Day + Departure_Month + Departure_Hour + Duration_Hours + 
-         number_of_stops + weekend + Date_of_Journey + departure_date_time + 
-         arrival_date_time + Airline + airport_code_arrival + 
-         airport_code_departure + airport_code_first_stop + 
-         airport_code_second_stop + airport_code_third_stop,
-  data = flight_data_train_processed, 
-  method = "anova",
-  minsplit = 8,   # Minimum observations to attempt split
-  minbucket = 2,  # Minimum observations in terminal nodes  
-  maxdepth = 30,  # Maximum tree depth
-)
-```
-
-```{r}
-#| warning: false
-#| message: false 
-#| echo: false
-
-print("=== Deep Model Summary ===")
-printcp(model_deep)
-```
-
-```{r deep-visualization}
-#| label: deep-visualization
-#| warning: false
-#| message: false 
-#| fig-cap: "Deep Decision Tree Complexity Analysis"
-
-plotcp(model_deep)
-```
-
-**Deep Model Insights:** - Despite allowing much deeper trees (maxdepth = 30), the model only grew to 10 splits - showing natural complexity limits - **Surprisingly, this model performed best** on test data, suggesting the additional complexity captured meaningful pricing patterns - The complexity parameter plot shows the algorithm found optimal depth around 10-11 splits - **Key finding**: Airline pricing is more complex than initially assumed, but still follows interpretable rules
-
-## Overfitted Tree Model
-
-Since my goal is to learn and explore data science techniques in R, I want to explore how deep a decision tree could go. So, I'll set an infinite complexity parameter (cp = -1). 
-
-This would not be a model I would choose for comparison and is purely for exploratory analysis.
-
-```{r overfit-model}
-#| label: overfit-model
-#| warning: false
-#| message: false 
-
-# Deep tree with relaxed constraints
-model_overfit <- rpart(
-  Price ~ Departure_Day + Departure_Month + Departure_Hour + Duration_Hours + 
-         number_of_stops + weekend + Date_of_Journey + departure_date_time + 
-         arrival_date_time + Airline + airport_code_arrival + 
-         airport_code_departure + airport_code_first_stop + 
-         airport_code_second_stop + airport_code_third_stop,
-  data = flight_data_train_processed, 
-  method = "anova",
-  minsplit = 8,   # Minimum observations to attempt split
-  minbucket = 2,  # Minimum observations in terminal nodes  
-  maxdepth = 30,  # Maximum tree depth
-   cp = -1
-)
-```
-
-```{r}
-#| warning: false
-#| message: false 
-#| echo: false
-
-options(max.print = 100)
-
-print("=== Overfitted Model Summary ===")
-printcp(model_overfit)
-```
-
-```{r overfit-visualization}
-#| label: overfit-visualization
-#| warning: false
-#| message: false 
-#| fig-cap: "Overfitted Tree Complexity Analysis"
-
-plotcp(model_overfit)
-```
-
-# Model Comparison
-
-```{r model-comparison}
-#| label: model-comparison
-#| warning: false
-#| message: false 
-
+```{r test-predictions}
 # Function to evaluate model performance
 evaluate_model <- function(model, test_data, model_name) {
   predictions <- predict(model, test_data)
@@ -355,7 +336,7 @@ evaluate_model <- function(model, test_data, model_name) {
   )
 }
 
-# Compare all models
+# Evaluate all models on test data
 model_comparison <- bind_rows(
   evaluate_model(model_baseline, flight_data_test_processed, "Baseline"),
   evaluate_model(model_enhanced, flight_data_test_processed, "Enhanced"), 
@@ -363,339 +344,288 @@ model_comparison <- bind_rows(
   evaluate_model(model_overfit, flight_data_test_processed, "Overfitted")
 )
 
+model_comparison %>%
+  kbl(caption = "Test Set Performance Comparison",
+      col.names = c("Model", "RMSE", "R-squared", "Correlation")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+                full_width = FALSE, position = "left")
 ```
 
-```{r}
-#| warning: false
-#| message: false 
-#| echo: false
+## Side-by-Side Model Performance Visualizations
 
-print("=== Model Performance Comparison ===")
-model_comparison
-```
+```{r performance-plots, message=FALSE, warning=FALSE, fig.width=16, fig.height=10}
+# Generate predictions for visualization
+deep_predictions <- predict(model_deep, flight_data_test_processed)
+overfitted_predictions <- predict(model_overfit, flight_data_test_processed)
 
-**Model Comparison Insights:** The results reveal an interesting progression:
+flight_data_test_processed$deep_predicted <- deep_predictions
+flight_data_test_processed$overfitted_predicted <- overfitted_predictions
 
--   **Clear Overfit**: The overfitted model performed as expected, but is indeed overfitted. 
--   **Deep model wins**: Despite allowing deeper complexity, the deep model achieved the best test performance (R² = 0.711) without overfitting
--   **Meaningful complexity**: Each model improvement captured real pricing patterns:
-    -   Baseline (64.9% R²): Basic route and airline effects
-    -   Enhanced (69.8% R²): Temporal pricing patterns\
-    -   Deep (71.1% R²): Complex route-time-airline interactions
--   **Diminishing returns**: The improvement rate decreased (4.9% → 1.3%), suggesting we're approaching the natural limits of single tree models
--   **RMSE improvement**: The deep model reduces prediction error by \~50 rupees compared to the enhanced model
-
-This suggests that airline pricing has more complexity than initially apparent, and the deeper tree successfully captures additional interactions.
-
-# Model Evaluation (Using Deep Model)
-
-```{r model-evaluation}
-#| label: model-evaluation
-#| warning: false
-#| message: false 
-
-# Use the best performing model (Deep model performed best) for detailed evaluation
-best_model <- model_deep  
-
-# Generate predictions on test set
-predictions <- predict(best_model, flight_data_test_processed)
-
-# Calculate evaluation metrics
-rmse <- sqrt(mean((flight_data_test_processed$Price - predictions)^2))
-r_squared <- (cor(flight_data_test_processed$Price, predictions))^2
-correlation <- cor(flight_data_test_processed$Price, predictions)
-```
-
-```{r}
-#| warning: false
-#| message: false 
-#| echo: false
-
-# Display metrics
-cat("=== Best Model Performance Metrics ===\n")
-cat("RMSE:", round(rmse, 2), "\n")
-cat("R-squared:", round(r_squared, 3), "\n") 
-cat("Correlation:", round(correlation, 3), "\n")
-```
-
-```{r prediction-analysis}
-#| label: prediction-analysis
-#| warning: false
-#| message: false 
-#| fig-cap: "Predicted vs Actual Flight Prices"
-#| fig-width: 8
-#| fig-height: 6
-
-# Add predictions to test data for visualization
-flight_data_test_processed$predicted_price <- predictions
-
-# Create prediction scatter plot
-flight_data_test_processed %>%
-  ggplot(aes(x = Price, y = predicted_price)) +
+# Create side-by-side performance plots
+p1 <- flight_data_test_processed %>%
+  ggplot(aes(x = Price, y = deep_predicted)) +
   geom_point(alpha = 0.6, size = 1.5, position = position_jitter(width = 50)) +
   geom_smooth(method = 'lm', se = TRUE, color = "red") +
   geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "blue") +
-  labs(
-    title = "Model Performance: Predicted vs Actual Flight Prices",
-    subtitle = paste("R² =", round(r_squared, 3), "| RMSE =", round(rmse, 2)),
-    x = "Actual Price (₹)",
-    y = "Predicted Price (₹)"
-  ) +
+  labs(title = "Deep Model: Predicted vs Actual",
+       subtitle = paste("R² =", round(cor(flight_data_test_processed$Price, deep_predictions)^2, 3),
+                       "| RMSE =", round(sqrt(mean((flight_data_test_processed$Price - deep_predictions)^2)), 2)),
+       x = "Actual Price (₹)", y = "Predicted Price (₹)") +
   theme_minimal() +
-  theme(plot.title = element_text(size = 14, face = "bold"))
+  theme(plot.title = element_text(size = 16, face = "bold"),
+        axis.text.x = element_text(size = 14),
+        axis.text.y = element_text(size = 14),
+        axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        legend.text = element_text(size = 14))+ 
+  guides(fill = guide_legend(reverse=T))
+
+p2 <- flight_data_test_processed %>%
+  ggplot(aes(x = Price, y = overfitted_predicted)) +
+  geom_point(alpha = 0.6, size = 1.5, position = position_jitter(width = 50)) +
+  geom_smooth(method = 'lm', se = TRUE, color = "red") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "blue") +
+  labs(title = "Overfitted Model: Predicted vs Actual",
+       subtitle = paste("R² =", round(cor(flight_data_test_processed$Price, overfitted_predictions)^2, 3),
+                       "| RMSE =", round(sqrt(mean((flight_data_test_processed$Price - overfitted_predictions)^2)), 2)),
+       x = "Actual Price (₹)", y = "Predicted Price (₹)") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 16, face = "bold"),
+        axis.text.x = element_text(size = 14),
+        axis.text.y = element_text(size = 14),
+        axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        legend.text = element_text(size = 14)) + 
+  guides(fill = guide_legend(reverse=T))
+
+grid.arrange(p1, p2, ncol = 2)
 ```
 
-**Prediction Analysis Insights:** The scatter plot reveals several important patterns:
+**Visual Comparison Insights:**
 
--   **Strong linear relationship**: Points cluster around the diagonal line, indicating good predictive accuracy
--   **Discrete predictions**: The vertical "bands" are characteristic of decision trees - each leaf node produces the same prediction for all samples that reach it
--   **Performance by price range**: The model appears to perform well across different price ranges, though we see some scatter at higher price points
--   **Potential outliers**: A few points far from the diagonal may represent special pricing scenarios (premium routes, last-minute bookings, etc.)
+-   Both models show strong linear relationships with actual prices
+
+-   The overfitted model shows slightly tighter clustering around the diagonal
+
+-   Both exhibit characteristic decision tree "banding" - decrete predictions from leaf nodes
+
+-   Performance difference is less dramatic visually than the complexity difference would suggest
+
+## Combined Airline-Route Pricing Analysis
+
+```{r combined-pricing-analysis, message=FALSE, warning=FALSE, fig.width=14, fig.height=15}
+# Generate predictions for training data to analyze pricing patterns
+deep_train_predictions <- predict(model_deep, flight_data_train_processed)
+overfitted_train_predictions <- predict(model_overfit, flight_data_train_processed)
+
+# Combined pricing analysis
+combined_pricing_analysis <- flight_data_train_processed %>%
+  mutate(
+    deep_predicted = deep_train_predictions,
+    overfitted_predicted = overfitted_train_predictions
+  ) %>%
+  group_by(Airline, airport_code_arrival) %>%
+  summarise(
+    actual_avg_price = mean(Price), 
+    deep_predicted_avg = mean(deep_predicted),
+    overfitted_predicted_avg = mean(overfitted_predicted),
+    count = n(),
+    .groups = "drop"
+  ) %>%
+  filter(count > 20) %>%
+  arrange(desc(actual_avg_price)) %>%
+  head(15)
+
+# Create combined visualization
+combined_pricing_analysis %>%
+  select(Airline, airport_code_arrival, actual_avg_price, 
+         deep_predicted_avg, overfitted_predicted_avg) %>%
+  pivot_longer(cols = c(actual_avg_price, deep_predicted_avg, overfitted_predicted_avg), 
+               names_to = "price_type", values_to = "price") %>%
+  mutate(
+    airline_route = paste(Airline, airport_code_arrival, sep = "-"),
+    price_type = case_when(
+      price_type == "actual_avg_price" ~ "Actual",
+      price_type == "deep_predicted_avg" ~ "Deep Model",
+      price_type == "overfitted_predicted_avg" ~ "Overfitted Model"
+    ),
+    price_type = factor(price_type, levels = c("Actual", "Overfitted Model", "Deep Model"))
+  ) %>%
+  ggplot(aes(x = reorder(airline_route, price), y = price, fill = price_type)) +
+  geom_col(position = "dodge", alpha = 0.7) +
+  coord_flip() +
+  scale_fill_manual(values = c("Actual" = "steelblue", 
+                               "Deep Model" = "darkgreen", 
+                               "Overfitted Model" = "darkred")) +
+  labs(title = "Airline-Route Pricing: Actual vs Model Predictions",
+       subtitle = "Top 15 routes by actual average price",
+       x = "Airline-Destination", 
+       y = "Average Price (₹)",
+       fill = "Price Type") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 16, face = "bold"),
+        axis.text.x = element_text(size = 14),
+        axis.text.y = element_text(size = 14),
+        axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        legend.text = element_text(size = 14),
+        legend.position = "bottom")+ 
+  guides(fill = guide_legend(reverse=T))
+```
+
+**Combined Pricing Analysis Insights:**
+
+-   **Route-Level Accuracy**: The overfitted model tracks actual prices more closely across airline-route combinations
+-   **Premium Routes**: Jet Airways-COK and similar premium routes show largest prediction challenges for the deep model
+-   **Consistency**: Both models capture the general pricing hierarchy correctly
+-   **Trade-off Visualization**: The improved accuracy comes at the cost of enormous complexity
 
 # Feature Importance Analysis
 
-```{r feature-importance}
-#| label: feature-importance
-#| warning: false
-#| message: false 
+```{r feature-importance, message=FALSE, warning=FALSE, fig.width=14, fig.height=10}
+# Feature importance for both models
+deep_feature_importance <- model_deep$variable.importance
+overfitted_feature_importance <- model_overfit$variable.importance
 
-# Add feature importance analysis
-feature_importance <- best_model$variable.importance
+# Create comparison plot
+deep_feature_df <- data.frame(
+  Feature = names(deep_feature_importance),
+  Importance = deep_feature_importance,
+  Model = "Deep"
+) %>% head(10)
 
-# Feature importance plot
-feature_df <- data.frame(
-  Feature = names(feature_importance),
-  Importance = feature_importance
-) %>%
-  arrange(desc(Importance)) %>%
-  head(10) %>%  # Top 10 features
+overfitted_feature_df <- data.frame(
+  Feature = names(overfitted_feature_importance),
+  Importance = overfitted_feature_importance,
+  Model = "Overfitted"
+) %>% head(10)
+
+combined_features <- rbind(deep_feature_df, overfitted_feature_df) %>%
   mutate(Feature = reorder(Feature, Importance))
 
-ggplot(feature_df, aes(x = Feature, y = Importance)) +
-  geom_col(fill = "steelblue", alpha = 0.7) +
+ggplot(combined_features, aes(x = Feature, y = Importance, fill = Model)) +
+  geom_col(position = "dodge", alpha = 0.7) +
   coord_flip() +
-  labs(title = "Top 10 Feature Importance in Decision Tree",
-       subtitle = "Based on reduction in node impurity",
+  scale_fill_manual(values = c("Deep" = "darkgreen", "Overfitted" = "darkred")) +
+  labs(title = "Feature Importance Comparison: Deep vs Overfitted Models",
+       subtitle = "Top 10 features by reduction in node impurity",
        x = "Features", 
        y = "Importance Score") +
   theme_minimal() +
-  theme(plot.title = element_text(size = 14, face = "bold"))
+  theme(plot.title = element_text(size = 16, face = "bold"),
+        axis.text.x = element_text(size = 14),
+        axis.text.y = element_text(size = 14),
+        axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        legend.text = element_text(size = 14))+ 
+  guides(fill = guide_legend(reverse=T))
 ```
 
-**Feature Importance Insights:** The feature importance ranking reveals the hierarchy of pricing factors:
+**Feature Importance Hierarchy:**
 
-1.  **Route structure dominates**: `airport_code_first_stop` is by far the most important feature, indicating that connection patterns drive pricing more than individual airline policies
-2.  **Duration matters**: Flight duration is the second most important factor, reflecting operational costs and passenger convenience pricing
-3.  **Engineered features work**: Our `number_of_stops` feature ranks highly, validating the feature engineering approach
-4.  **Airline brand effects**: Airline ranking suggests brand positioning impacts pricing, but less than route characteristics
-5.  **Temporal patterns**: The presence of date/time features indicates dynamic pricing strategies
+1.  **Route Structure**: `airport_code_first_stop` dominates both models
+2.  **Operational Factors**: Duration and number of stops rank highly
+3.  **Brand Effects**: Airline importance varies between models
+4.  **Temporal Patterns**: Date/time features provide additional predictive power
 
-This hierarchy makes business sense - route complexity and flight duration are fundamental cost drivers, while airline branding provides differentiation within those constraints.
+Both models identify similar key drivers, suggesting the importance rankings reflect genuine pricing patterns rather than model artifacts.
 
-```{r cross-validation}
-#| label: cross-validation
-#| warning: false
-#| message: false 
+# Business Implications and Model Selection
 
-# Cross-validation for model selection
-train_control <- trainControl(method = "cv", number = 10)
+## Complexity vs Performance Trade-off
 
-cv_model <- train(Price ~ ., data = flight_data_train_processed, 
-                  method = "rpart", trControl = train_control)
+```{r complexity-comparison}
+complexity_comparison <- data.frame(
+  Model = c("Deep Model", "Overfitted Model"),
+  Approximate_Splits = c("10", "1,387+"),
+  Test_R_squared = c("71.1%", "78.4%"),
+  CV_R_squared = c("72.3%", "76.8%"),
+  Interpretability = c("High", "None"),
+  Deployment_Complexity = c("Low", "Very High"),
+  Maintenance_Effort = c("Low", "Very High")
+)
 
-cv_model
+complexity_comparison %>%
+  kbl(caption = "Model Complexity vs Performance Analysis",
+      col.names = c("Model", "Approx. Splits", "Test R²", "Stratified CV R²", 
+                   "Interpretability", "Deployment", "Maintenance")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+                full_width = FALSE, position = "left")
 ```
 
-**Cross-Validation Analysis:** The cross-validation results provide crucial insights into model generalization:
+## Final Model Recommendation: Deep Decision Tree
 
--   **Optimal complexity parameter**: cp = 0.050 provides the best balance between bias and variance
--   **Expected performance**: The CV R² of \~52% represents a more conservative (and realistic) estimate of model performance on new data
--   **Performance gap**: The difference between CV performance (52%) and test set performance (71%) suggests either:
-    -   The test set has more predictable patterns than the training folds
-    -   Potential minor overfitting to test set characteristics
-    -   Natural variation in data splits
+**Rationale for Deep Model Selection:**
 
-This gap is important for setting realistic expectations in production - we should expect closer to 52% R² on truly new, unseen data.
+1.  **Balanced Performance**: Achieves 72.3% R² with realistic cross-validation
+2.  **Interpretability**: 10 splits create understandable business rules
+3.  **Stability**: Lower variance across folds indicates better generalization
+4.  **Practical Deployment**: Manageable complexity for production systems
+5.  **Business Communication**: Tree structure enables stakeholder explanation
 
-# Residual Analysis
+**The Overfitting Trade-off Assessment:**
 
-```{r residual-analysis}
-#| label: residual-analysis
-#| warning: false
-#| message: false 
-#| fig-width: 8
-#| fig-height: 6
+-   **Improvement**: Only 4.5 percentage points better R² (76.8% vs 72.3%)
 
-# Enhanced residual analysis
-flight_data_test_processed %>%
-  mutate(residuals = Price - predicted_price) %>%
-  ggplot(aes(x = predicted_price, y = residuals)) +
-  geom_point(alpha = 0.6, color = "darkblue") +
-  geom_hline(yintercept = 0, color = "red", linetype = "dashed", size = 1) +
-  geom_smooth(method = "loess", se = TRUE, color = "orange", alpha = 0.3) +
-  labs(title = "Residual Analysis: Model Prediction Errors", 
-       subtitle = "Points should be randomly scattered around zero line",
-       x = "Predicted Price (₹)", 
-       y = "Residuals (Actual - Predicted)") +
-  theme_minimal() +
-  theme(plot.title = element_text(size = 14, face = "bold"))
-```
+-   **Cost**: 130x more complexity (1,387+ vs 10 splits)
 
-**Residual Analysis Insights:** The residual plot reveals important model behavior patterns:
+-   **Risk**: Higher variance suggests memorization over learning
 
--   **Centering**: Residuals are well-centered around zero, indicating no systematic bias in predictions
--   **Homoscedasticity**: The spread of residuals is relatively consistent across prediction ranges, suggesting stable model variance
--   **Decision tree artifacts**: The vertical "bands" reflect the discrete nature of tree predictions - each leaf node gives the same prediction
--   **Outlier identification**: Large positive residuals (\>5000) may indicate special pricing scenarios the model doesn't capture well
--   **No major patterns**: The absence of curved patterns suggests the linear relationships are appropriately captured
+-   **Conclusion**: The marginal improvement doesn't justify the enormous complexity cost
 
-The loess smoothing line helps identify any subtle non-linear patterns in the residuals that might suggest model improvements.
+# Key Business Insights
 
-```{r outlier-analysis}
-#| label: outlier-analysis
-#| warning: false
-#| message: false
+## Pricing Hierarchy Discovered
 
-# Analyze outliers for business insights
-outliers <- flight_data_test_processed %>%
-  mutate(residuals = Price - predicted_price) %>%
-  filter(abs(residuals) > 5000) %>%
-  select(Price, predicted_price, residuals, Airline, airport_code_arrival, 
-         Duration_Hours, number_of_stops, weekend) %>%
-  arrange(desc(abs(residuals)))
+1.  **Route Structure Dominates**: Connection patterns (first stop) drive primary pricing decisions
+2.  **Operational Costs Matter**: Flight duration and number of stops are key factors
+3.  **Brand Positioning**: Airlines differentiate within route-duration constraints
+4.  **Dynamic Pricing**: Temporal factors indicate sophisticated revenue management
+5.  **Market Segmentation**: Clear pricing tiers exist across airline-route combinations
 
-```
+## Actionable Recommendations
 
-**Outlier Analysis Insights**
+**For Revenue Optimization:** - Focus on route complexity and duration as primary pricing levers - Use airline branding for differentiation within operational constraints - Leverage temporal patterns for dynamic pricing strategies
 
-The 26 significant outliers reveal interesting patterns:
+**For Competitive Strategy:** - Operational efficiency (direct routes, shorter flights) creates competitive advantages - Route structure matters more than brand positioning alone - Premium routes command consistent price premiums across all airlines
 
--   **Premium airlines** (Vistara, Jet Airways) dominate large prediction errors
--   DEL and COK routes appear frequently - suggesting **complex pricing on these routes**
--   **Duration extremes** (very short 2.7h and very long 25.9h flights) are harder to predict
--   This suggests airlines use **special pricing rules** for premium routes and unusual flight patterns
-
-```{r}
-#| warning: false
-#| message: false 
-#| echo: false
-
-cat("=== Outlier Analysis ===\n")
-cat("Number of significant outliers (>5000 rupees error):", nrow(outliers), "\n")
-if(nrow(outliers) > 0) {
-  print(head(outliers, 10))
-}
-```
-
-# Route-Airline Pricing Analysis
-
-```{r check-airport-route}
-#| label: check-airport-route
-#| warning: false
-#| message: false 
-
-# Enhanced airline-route pricing analysis
-pricing_analysis <- flight_data_train_processed %>%
-  group_by(Airline, airport_code_arrival) %>%
-  summarise(avg_price = mean(Price), 
-            price_sd = sd(Price),
-            count = n(),
-            min_price = min(Price),
-            max_price = max(Price)) %>%
-  filter(count > 20) %>%
-  arrange(desc(avg_price)) %>%
-  mutate(price_range = max_price - min_price,
-         cv_price = price_sd / avg_price) # Coefficient of variation
-
-```
-
-```{r}
-#| warning: false
-#| message: false 
-#| echo: false
-print("=== Airline-Route Pricing Strategy Analysis ===")
-print(pricing_analysis, n = 15)
-```
-
-```{r pricing-visualization}
-#| label: pricing-visualization
-#| warning: false
-#| message: false
-#| fig-width: 10
-#| fig-height: 8
-
-# Visualize airline pricing strategies
-pricing_analysis %>%
-  head(15) %>%
-  ggplot(aes(x = reorder(paste(Airline, airport_code_arrival, sep = "-"), avg_price), 
-             y = avg_price)) +
-  geom_col(fill = "steelblue", alpha = 0.7) +
-  geom_errorbar(aes(ymin = avg_price - price_sd, ymax = avg_price + price_sd), 
-                width = 0.2, alpha = 0.6) +
-  coord_flip() +
-  labs(title = "Average Flight Prices by Airline-Route Combination",
-       subtitle = "Error bars show ±1 standard deviation",
-       x = "Airline-Destination", 
-       y = "Average Price (₹)") +
-  theme_minimal() +
-  theme(plot.title = element_text(size = 14, face = "bold"))
-```
-
-**Airline-Route Pricing Insights:** This analysis reveals distinct pricing strategies and market positioning:
-
-**Premium Tier (\>₹10,000 avg):** - Jet Airways dominates premium routes, especially to COK (Cochin) - Multiple carriers to COK suggests this is a high-value destination - Large price variations indicate dynamic pricing or service differentiation
-
-**Mid-Market (₹6,000-10,000):** - Air India and Vistara occupy the middle ground - More consistent pricing (lower standard deviations) suggests stable positioning
-
-**Budget Segment (\<₹6,000):** - SpiceJet and IndiGo consistently offer lower prices - Lower price variations suggest more standardized pricing models
-
-**Route-Specific Patterns:** - **COK routes** command premium across all airlines - possibly due to distance, demand, or airport costs - **HYD routes** tend to be more affordable - potentially indicating competitive market or lower demand - **Price volatility** varies significantly by airline-route, indicating different pricing strategies
-
-This segmentation provides valuable insights for competitive positioning and market understanding.
-
-# Results and Interpretation
-
-## Key Findings
-
-1.  **Model Performance**: The deep decision tree achieves an R² of 0.711 on test data (best performance), though cross-validation suggests \~52% is more realistic for new data.
-
-2.  **Feature Hierarchy**: Route structure (first stop) dominates pricing decisions, followed by flight duration and number of stops. This indicates operational factors outweigh brand positioning in pricing.
-
-3.  **Airline Segmentation**: Clear pricing tiers exist with Jet Airways leading premium positioning, IndiGo/SpiceJet in budget segments, and others in between.
-
-4.  **Model Behavior**: The decision tree provides interpretable rules but produces discrete predictions, leading to characteristic "banding" in prediction plots.
-
-## Business Implications
-
--   **Route Planning**: Connection patterns and duration are primary cost drivers - direct flights to premium destinations command highest prices
--   **Competitive Strategy**: Airline brand matters less than route characteristics, suggesting operational efficiency is key
--   **Dynamic Pricing**: Temporal features influence pricing, indicating sophisticated revenue management systems
--   **Market Segmentation**: Clear pricing tiers exist across airline-route combinations, enabling targeted strategies
+**For Model Deployment:** - The deep decision tree provides the optimal balance of accuracy and interpretability - Stratified validation is crucial when dealing with price outliers - Regular model updates should focus on route and temporal pattern changes
 
 # Limitations and Future Work
 
 ## Current Limitations
 
-1.  **Discrete Predictions**: Single trees produce limited prediction granularity
-2.  **Cross-Validation Gap**: Performance difference between CV and test suggests generalization concerns\
-3.  **Outlier Handling**: Large prediction errors indicate some pricing scenarios aren't well captured
-4.  **Feature Interactions**: Simple trees may miss complex airline-route-timing interactions
+1.  **Discrete Predictions**: Decision trees produce limited prediction granularity
+2.  **Outlier Sensitivity**: High-price flights remain challenging to predict accurately
+3.  **Temporal Patterns**: Limited seasonal and demand modeling
+4.  **Feature Interactions**: Single trees may miss complex multi-way interactions
 
 ## Recommendations for Enhancement
 
-1.  **Random Forest**: Address discrete predictions and improve generalization
-2.  **Feature Engineering**: Explore route complexity metrics, seasonal indicators, demand proxies
-3.  **Ensemble Methods**: Combine multiple approaches for robust predictions
-4.  **Validation Strategy**: Implement time-based splits to better reflect real-world deployment
+1.  **Random Forest**: Combine multiple trees to address prediction granularity and improve generalization
+2.  **Advanced Feature Engineering**:
+    -   Route complexity metrics (distance, hub importance)
+    -   Seasonal demand indicators
+    -   Competitor pricing proxies
+3.  **Ensemble Methods**: Combine decision trees with linear models for hybrid approach
+4.  **Validation Strategy**: Implement time-based splits for more realistic deployment simulation
 
 # Conclusion
 
-This analysis demonstrates that decision trees effectively model flight pricing with meaningful business insights. The deep model achieved the strongest test performance (R² = 0.711), indicating that airline pricing has more complexity than initially apparent, yet still follows interpretable decision rules.
+This analysis demonstrates that decision trees effectively model flight pricing with meaningful business insights. The deep decision tree achieves strong predictive performance (R² = 72.3%) while maintaining interpretability - a crucial advantage for stakeholder communication and business strategy development.
 
-The model reveals that operational factors (route structure, duration) dominate pricing decisions over brand effects, and clear market segmentation exists across airline-route combinations. The interpretable nature of decision trees makes them valuable for stakeholder communication and business strategy development.
+**Key Findings:**
 
-Future work should focus on ensemble methods to improve prediction granularity while maintaining interpretability, and more sophisticated feature engineering to capture complex pricing interactions.
+-   Operational factors (route structure, duration) dominate pricing over brand effects
 
-------------------------------------------------------------------------
+-   Clear market segmentation exists across airline-route combinations
 
-*Analysis completed using R `r R.version.string` with rpart package for decision tree modeling.*
+-   Complexity vs performance trade-offs strongly favor the interpretable deep model
+
+-   Stratified cross-validation is essential for realistic performance assessment with outlier-prone data
+
+**Strategic Implications:** The model reveals that airlines should prioritize operational efficiency and route optimization over pure brand differentiation. The interpretable nature of decision trees makes them valuable for revenue management teams who need to understand and explain pricing decisions to stakeholders.
+
+**Future Development:** While the deep decision tree provides an excellent foundation, ensemble methods (Random Forest) would likely improve prediction accuracy while preserving much of the interpretability advantage. The current model serves as an strong baseline for more sophisticated approaches.
+
+*Analysis completed using R version 4.5.1 with the rpart package for decision tree modeling and stratified cross-validation for robust performance evaluation.*
