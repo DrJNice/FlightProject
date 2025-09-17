@@ -281,6 +281,15 @@ bst_model <- xgboost(
  verbose = 1 # Set to 0 to suppress training messages.
 )
 
+best_model_rmse <- bst_model$evaluation_log 
+
+best_model_rmse %>% 
+  ggplot(aes(x = iter, y = train_rmse)) +
+  geom_point() +
+  labs(x = "iteration", y = "RMSE")
+  
+
+
 ```
 
 ## Step 5: Make predictions on new data.
@@ -351,6 +360,10 @@ dtest <- xgb.DMatrix(data = test_features_matrix_aligned)
 
 # Now, prediction should work without error
 predictions <- predict(bst_model, dtest)
+
+# Calculate metrics
+rmse_boosted <- sqrt(mean((flight_data_test_processed$Price - predictions)^2))
+r_squared_boosted <- cor(flight_data_test_processed$Price, predictions)^2
 
 ```
 
